@@ -39,6 +39,7 @@ void main(){
   col.r = texture2D(tDiffuse, vUv - c * ca).r;
   col.g = texture2D(tDiffuse, vUv).g;
   col.b = texture2D(tDiffuse, vUv + c * ca).b;
+  if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
   col *= uExposure;
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
   // split toning: cool shadows, warm highlights

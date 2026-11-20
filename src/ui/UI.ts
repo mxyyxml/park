@@ -1,0 +1,241 @@
+import type { TrialDef } from '../game/Trials';
+import type { Save, Settings } from '../game/Save';
+
+export function fmt(t: number | null | undefined): string {
+  if (t == null || !isFinite(t)) return '--:--.--';
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+}
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, html = ''): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (html) e.innerHTML = html;
+  return e;
+}
+
+export function medalOf(t: TrialDef, time: number | null): 'gold' | 'silver' | 'bronze' | 'none' {
+  if (time == null) return 'none';
+  if (time <= t.medals[0]) return 'gold';
+  if (time <= t.medals[1]) return 'silver';
+  if (time <= t.medals[2]) return 'bronze';
+  return 'none';
+}
+
+export class UI {
+  root = document.getElementById('ui')!;
+  loading: HTMLElement;
+  hud: HTMLElement;
+  menu: HTMLElement;
+  fade: HTMLElement;
+  private timer: HTMLElement;
+  private cp: HTMLElement;
+  private shards: HTMLElement;
+  private speed: HTMLElement;
+  private marker: HTMLElement;
+  private toastEl: HTMLElement;
+  private countdownEl: HTMLElement;
+  private help: HTMLElement;
+  private reticle: HTMLElement;
+  debug: HTMLElement;
+  prompt: HTMLElement;
+  private toastT = 0;
+
+  constructor() {
+    this.loading = el('div', { id: 'loading', class: 'layer' }, `<div class="logo">SKYLINE <b>RUNNER</b></div><div class="bar"><i></i></div><div class="msg">Building the city</div>`);
+    this.hud = el('div', { id: 'hud', class: 'layer hidden' });
+    this.reticle = el('div', { id: 'reticle' });
+    this.timer = el('div', { id: 'timer' });
+    this.cp = el('div', { id: 'cpcount' });
+    this.shards = el('div', { id: 'shards' });
+    this.speed = el('div', { id: 'speed' }, `<span class="v">0.0</span> M/S<div class="bar"><i></i></div>`);
+    this.marker = el('div', { id: 'marker' }, `<div class="d"></div><div class="m"></div>`);
+    this.toastEl = el('div', { id: 'toast' });
+    this.countdownEl = el('div', { id: 'countdown' });
+    this.help = el('div', { id: 'help', class: 'hidden' }, `
+      <b>MOVE</b> <kbd>W A S D</kbd> &nbsp; <b>SPRINT</b> <kbd>SHIFT</kbd><br>
+      <b>UP</b> <kbd>SPACE</kbd> jump · wall-run · wall-climb · grab · vault<br>
+      <b>DOWN</b> <kbd>CTRL</kbd>/<kbd>C</kbd> slide · roll on landing · drop<br>
+      <b>QUICK TURN</b> <kbd>Q</kbd> &nbsp; <b>WALK</b> <kbd>X</kbd> &nbsp; <b>RESTART</b> <kbd>R</kbd><br>
+      Build speed before gaps — momentum is everything.`);
+    this.debug = el('div', { id: 'debug', class: 'hidden' });
+    this.prompt = el('div', { id: 'prompt', class: 'hidden' }, 'Click to resume');
+    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt);
+    this.menu = el('div', { class: 'layer menu hidden' });
+    this.fade = el('div', { id: 'fade', class: 'layer' });
+    this.root.append(this.hud, this.menu, this.fade, this.loading);
+  }
+
+  setLoading(p: number, msg: string) {
+    (this.loading.querySelector('.bar i') as HTMLElement).style.width = `${Math.round(p * 100)}%`;
+    (this.loading.querySelector('.msg') as HTMLElement).textContent = msg;
+  }
+  hideLoading() { this.loading.style.opacity = '0'; setTimeout(() => this.loading.classList.add('hidden'), 650); }
+
+  showHud(v: boolean) { this.hud.classList.toggle('hidden', !v); }
+  applySettings(s: Settings) {
+    this.reticle.classList.toggle('hidden', !s.reticle);
+    this.speed.classList.toggle('hidden', !s.showSpeed);
+  }
+  showHelp(v: boolean) { this.help.classList.toggle('hidden', !v); this.help.style.opacity = v ? '1' : '0'; }
+  fadeHelp() { this.help.style.opacity = '0'; setTimeout(() => this.help.classList.add('hidden'), 900); }
+
+  setTimer(t: number | null, split?: number | null) {
+    if (t == null) { this.timer.innerHTML = ''; return; }
+    let s = fmt(t);
+    if (split != null) s += `<span class="split ${split <= 0 ? 'ahead' : 'behind'}">${split <= 0 ? '−' : '+'}${Math.abs(split).toFixed(2)}</span>`;
+    this.timer.innerHTML = s;
+  }
+  setCheckpoints(i: number, n: number, label = '') { this.cp.innerHTML = n ? `${label}<br>${i} / ${n}` : label; }
+  setShards(n: number, total: number) { this.shards.innerHTML = `<i></i> ${n} / ${total}`; }
+  setSpeed(v: number, flow: number) {
+    (this.speed.querySelector('.v') as HTMLElement).textContent = v.toFixed(1);
+    const bar = this.speed.querySelector('.bar i') as HTMLElement;
+    bar.style.width = `${Math.min(100, v / 10 * 100)}%`;
+    bar.classList.toggle('flow', flow > 0.95);
+  }
+  setMarker(x: number, y: number, visible: boolean, offscreen: boolean, dist: number) {
+    this.marker.style.opacity = visible ? '1' : '0';
+    this.marker.style.transform = `translate(${x}px, ${y}px)`;
+    this.marker.classList.toggle('off', offscreen);
+    (this.marker.querySelector('.m') as HTMLElement).textContent = `${Math.round(dist)} m`;
+  }
+  toast(text: string, sub = '', red = false, dur = 1.8) {
+    this.toastEl.innerHTML = `${text}${sub ? `<small>${sub}</small>` : ''}`;
+    this.toastEl.classList.toggle('red', red);
+    this.toastEl.style.opacity = '1';
+    this.toastT = dur;
+  }
+  countdown(text: string) {
+    this.countdownEl.textContent = text;
+    this.countdownEl.style.opacity = text ? '1' : '0';
+  }
+  tick(dt: number) {
+    if (this.toastT > 0) { this.toastT -= dt; if (this.toastT <= 0) this.toastEl.style.opacity = '0'; }
+  }
+  setFade(a: number, red = false) { this.fade.style.opacity = String(a); this.fade.classList.toggle('red', red); }
+
+  // ---------------- menus ----------------
+  private open(html: HTMLElement) {
+    this.menu.innerHTML = '';
+    this.menu.append(html);
+    this.menu.classList.remove('hidden');
+    const first = html.querySelector('.btn') as HTMLElement | null;
+    first?.focus({ preventScroll: true });
+  }
+  closeMenu() { this.menu.classList.add('hidden'); this.menu.innerHTML = ''; }
+  get menuOpen() { return !this.menu.classList.contains('hidden'); }
+
+  private button(label: string, onClick: () => void, cls = '', right = '') {
+    const b = el('button', { class: `btn ${cls}` }, `<span>${label}</span>${right ? `<small>${right}</small>` : ''}`);
+    b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+    return b;
+  }
+
+  mainMenu(o: { onFree: () => void; onTrials: () => void; onSettings: () => void; onControls: () => void; shards: string }) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, 'SKYLINE<br><b>RUNNER</b>'), el('h2', {}, 'First-person freerunning'));
+    p.append(this.button('Free Run', o.onFree, 'primary', 'explore the district'));
+    p.append(this.button('Time Trials', o.onTrials, '', 'races & ghosts'));
+    p.append(this.button('Settings', o.onSettings));
+    p.append(this.button('Controls', o.onControls));
+    p.append(el('div', { class: 'foot' }, `Data shards found: ${o.shards}<br>Mouse + keyboard or gamepad. Click to capture the mouse; Esc pauses.`));
+    this.open(p);
+  }
+
+  trialsMenu(trials: TrialDef[], save: Save, o: { onRun: (t: TrialDef, ghost: boolean) => void; onReplay: (t: TrialDef) => void; onBack: () => void }) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, '<b>TIME</b> TRIALS'), el('h2', {}, 'Beat the clock. Race your best ghost.'));
+    for (const t of trials) {
+      const r = save.trial(t.id);
+      const m = medalOf(t, r.best);
+      const card = el('div', { class: 'trial' });
+      card.append(el('div', { class: 't' }, `<strong>${t.name}</strong><span>${fmt(r.best)}</span>`));
+      card.append(el('p', {}, t.desc));
+      card.append(el('div', { class: 'medals' }, `<span class="medal ${m}"><i></i>${m === 'none' ? 'no medal' : m}</span>
+        <span class="medal gold"><i></i>${fmt(t.medals[0])}</span><span class="medal silver"><i></i>${fmt(t.medals[1])}</span><span class="medal bronze"><i></i>${fmt(t.medals[2])}</span>`));
+      const row = el('div', { class: 'row' });
+      row.append(this.button('Run', () => o.onRun(t, true), 'primary'));
+      if (r.ghost) row.append(this.button('Watch PB', () => o.onReplay(t)));
+      card.append(row);
+      p.append(card);
+    }
+    p.append(this.button('Back', o.onBack));
+    this.open(p);
+  }
+
+  pauseMenu(o: { inTrial: boolean; onResume: () => void; onRestart: () => void; onRespawn: () => void; onSettings: () => void; onControls: () => void; onQuit: () => void }) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, 'PAUSED'), el('h2', {}, o.inTrial ? 'Time trial' : 'Free run'));
+    p.append(this.button('Resume', o.onResume, 'primary'));
+    if (o.inTrial) p.append(this.button('Restart trial', o.onRestart, '', 'R'));
+    p.append(this.button(o.inTrial ? 'Last checkpoint' : 'Respawn', o.onRespawn));
+    p.append(this.button('Settings', o.onSettings));
+    p.append(this.button('Controls', o.onControls));
+    p.append(this.button('Main menu', o.onQuit));
+    this.open(p);
+  }
+
+  results(o: { trial: TrialDef; time: number; best: number | null; isPB: boolean; splits: number[]; onRetry: () => void; onReplay: () => void; onBack: () => void }) {
+    const p = el('div', { class: 'panel results' });
+    const m = medalOf(o.trial, o.time);
+    p.append(el('div', { class: 'tag' }), el('h2', {}, o.trial.name));
+    if (o.isPB) p.append(el('div', { class: 'pb' }, 'NEW PERSONAL BEST'));
+    p.append(el('div', { class: 'big' }, fmt(o.time)));
+    p.append(el('div', { class: 'medals' }, `<span class="medal ${m}"><i></i> ${m === 'none' ? 'no medal' : m.toUpperCase()}</span> &nbsp; best ${fmt(o.best)}`));
+    p.append(el('div', { class: 'splits' }, o.splits.map((s, i) => `CP${String(i + 1).padStart(2, '0')}  ${fmt(s)}`).join('<br>')));
+    p.append(this.button('Retry', o.onRetry, 'primary', 'R'));
+    p.append(this.button('Watch replay', o.onReplay));
+    p.append(this.button('Back to trials', o.onBack));
+    this.open(p);
+  }
+
+  settingsMenu(s: Settings, onChange: (s: Settings) => void, onBack: () => void) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, 'SETTINGS'), el('h2', {}, 'Graphics · Camera · Audio'));
+    const add = (label: string, input: HTMLElement) => { const r = el('div', { class: 'setting' }); r.append(el('span', {}, label), input); p.append(r); };
+    const sel = el('select');
+    for (const q of ['low', 'medium', 'high', 'ultra']) { const op = el('option', { value: q }, q.toUpperCase()); if (q === s.quality) op.setAttribute('selected', ''); sel.append(op); }
+    sel.addEventListener('change', () => { s.quality = sel.value as Settings['quality']; onChange(s); });
+    add('Graphics quality', sel);
+    const range = (label: string, key: keyof Settings, min: number, max: number, step: number) => {
+      const i = el('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(s[key]) });
+      i.addEventListener('input', () => { (s as any)[key] = Number(i.value); onChange(s); });
+      add(label, i);
+    };
+    const check = (label: string, key: keyof Settings) => {
+      const i = el('input', { type: 'checkbox' }) as HTMLInputElement; i.checked = !!s[key];
+      i.addEventListener('change', () => { (s as any)[key] = i.checked; onChange(s); });
+      add(label, i);
+    };
+    range('Field of view', 'fov', 70, 110, 1);
+    range('Mouse sensitivity', 'sensitivity', 0.2, 3, 0.05);
+    check('Invert Y', 'invertY');
+    range('Camera motion (bob, tilt, shake)', 'comfort', 0, 1, 0.05);
+    check('Wall-jump view assist', 'autoTurn');
+    range('Master volume', 'volume', 0, 1, 0.01);
+    check('Speed readout', 'showSpeed');
+    check('Centre dot', 'reticle');
+    check('Runner vision (route marker)', 'runnerVision');
+    p.append(this.button('Back', onBack));
+    this.open(p);
+  }
+
+  controlsMenu(onBack: () => void) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, 'CONTROLS'), el('h2', {}, 'Up · Down · Momentum'));
+    p.append(el('div', { class: 'keys' }, `
+      <span>Move</span><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / left stick</span>
+      <span>Sprint</span><span><kbd>Shift</kbd> / L3 · builds momentum</span>
+      <span>Walk</span><span><kbd>X</kbd> / <kbd>Alt</kbd></span>
+      <span>Up</span><span><kbd>Space</kbd> / <kbd>LMB</kbd> / A · jump, wall-run, wall-climb, climb, vault, pull up</span>
+      <span>Down</span><span><kbd>Ctrl</kbd> / <kbd>C</kbd> / <kbd>RMB</kbd> / B · crouch, slide, roll (press just before landing), drop</span>
+      <span>Quick turn</span><span><kbd>Q</kbd> / X · also: jump during a wall-climb to spin off</span>
+      <span>Restart trial</span><span><kbd>R</kbd> / Back</span>
+      <span>Pause</span><span><kbd>Esc</kbd> / Start</span>
+      <span>Debug overlay</span><span><kbd>F3</kbd></span>`));
+    p.append(el('div', { class: 'foot' }, `Tips — Run straight to build flow before long gaps. Hit walls at a shallow angle to wall-run; head-on and press Up to wall-climb, then Up again at the top to spin off. Press Down just before a big landing to roll and keep your speed. Ledges are grabbed automatically while you hold forward.`));
+    p.append(this.button('Back', onBack));
+    this.open(p);
+  }
+}

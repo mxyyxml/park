@@ -38,16 +38,15 @@ function limbGeo(len: number, r0: number, r1: number, bulge = 0, flatten = 1, se
   const pts: THREE.Vector2[] = [];
   const n = 14;
   // bottom cap
-  for (let i = 0; i <= 4; i++) { const a = -Math.PI / 2 + (i / 4) * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r0, Math.sin(a) * r0 * 0.6)); }
+  for (let i = 0; i <= 4; i++) { const a = -Math.PI / 2 + (i / 4) * Math.PI / 2; pts.push(new THREE.Vector2(Math.max(0.0015, Math.cos(a) * r0), Math.sin(a) * r0 * 0.6)); }
   for (let i = 1; i < n; i++) {
     const t = i / n;
     const r = r0 + (r1 - r0) * t + bulge * Math.sin(Math.PI * Math.pow(t, 0.8));
     pts.push(new THREE.Vector2(r, t * len));
   }
-  for (let i = 0; i <= 4; i++) { const a = (i / 4) * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r1, len + Math.sin(a) * r1 * 0.6)); }
+  for (let i = 0; i <= 4; i++) { const a = (i / 4) * Math.PI / 2; pts.push(new THREE.Vector2(Math.max(0.0015, Math.cos(a) * r1), len + Math.sin(a) * r1 * 0.6)); }
   const g = new THREE.LatheGeometry(pts, seg);
   g.scale(1, 1, flatten);
-  g.computeVertexNormals();
   return g;
 }
 
@@ -235,11 +234,10 @@ export class RunnerBody {
       this.legs.push({ thigh, shin, knee, shoe, side });
     }
     // torso (jacket) — lathe profile, front zipper & red stripe
-    const prof = [[0.0, -0.02], [0.13, 0.0], [0.15, 0.1], [0.155, 0.22], [0.17, 0.36], [0.175, 0.44], [0.12, 0.5], [0.06, 0.53], [0.0, 0.535]]
+    const prof = [[0.002, -0.02], [0.13, 0.0], [0.15, 0.1], [0.155, 0.22], [0.17, 0.36], [0.175, 0.44], [0.12, 0.5], [0.06, 0.53], [0.002, 0.535]]
       .map(([r, y]) => new THREE.Vector2(r, y));
     const tg = new THREE.LatheGeometry(prof, 18);
     tg.scale(1, 1, 0.66);
-    tg.computeVertexNormals();
     this.torso = new THREE.Mesh(tg, m.jacket);
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.5, 0.012), m.accent);
     stripe.position.set(0.03, 0.26, 0.112);
@@ -530,9 +528,13 @@ export class RunnerBody {
       // spring in view space
       if (arm.pos.lengthSq() === 0) arm.pos.copy(target);
       const k = stiff * stiff, c = 2 * stiff * 0.9;
-      const acc = V().subVectors(target, arm.pos).multiplyScalar(k).addScaledVector(arm.vel, -c);
-      arm.vel.addScaledVector(acc, Math.min(dt, 1 / 30));
-      arm.pos.addScaledVector(arm.vel, Math.min(dt, 1 / 30));
+      let n = Math.ceil(Math.min(dt, 0.1) / (1 / 240));
+      const h = Math.min(dt, 0.1) / Math.max(1, n);
+      while (n-- > 0) {
+        const acc = V().subVectors(target, arm.pos).multiplyScalar(k).addScaledVector(arm.vel, -c);
+        arm.vel.addScaledVector(acc, h);
+        arm.pos.addScaledVector(arm.vel, h);
+      }
       arm.hand.setCurl(arm.hand.curl + (curl - arm.hand.curl) * Math.min(1, dt * 12));
       // IK in view space, then to world
       const E = V(), Tt = V();

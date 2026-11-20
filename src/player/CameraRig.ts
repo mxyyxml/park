@@ -10,9 +10,14 @@ import { P, PEvent, PlayerController, PState } from './PlayerController';
 class Spring {
   x = 0; v = 0;
   constructor(public k: number, public damp: number) {}
+  /** semi-implicit Euler in fixed sub-steps: stable for any frame time */
   step(target: number, dt: number) {
-    const a = this.k * (target - this.x) - this.damp * this.v;
-    this.v += a * dt; this.x += this.v * dt;
+    let n = Math.ceil(dt / (1 / 240));
+    const h = dt / Math.max(1, n);
+    while (n-- > 0) {
+      const a = this.k * (target - this.x) - this.damp * this.v;
+      this.v += a * h; this.x += this.v * h;
+    }
     return this.x;
   }
 }
