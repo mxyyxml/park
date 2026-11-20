@@ -109,6 +109,9 @@ const tmpRes = newMoveResult();
 
 function clamp(v: number, a: number, b: number) { return v < a ? a : v > b ? b : v; }
 function smooth01(a: number, b: number, x: number) { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
+const notClimbable = (b: Box) => !(b.flags & (F.PIPE | F.LADDER));
+/** extent of a box face along the horizontal tangent of normal (nx,nz) */
+function faceWidth(b: Box, nx: number, nz: number) { return Math.abs(nx) > 0.5 ? b.maxZ - b.minZ : b.maxX - b.minX; }
 function wrapAngle(a: number) { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; }
 
 export class PlayerController {
@@ -230,8 +233,8 @@ export class PlayerController {
   }
 
   /** Horizontal wall ray. Returns hit with a horizontal normal or null. */
-  private wallRay(ox: number, oy: number, oz: number, dx: number, dz: number, dist: number) {
-    const h = this.world.raycast(ox, oy, oz, dx, 0, dz, dist);
+  private wallRay(ox: number, oy: number, oz: number, dx: number, dz: number, dist: number, skipClimbables = false) {
+    const h = this.world.raycast(ox, oy, oz, dx, 0, dz, dist, skipClimbables ? notClimbable : undefined);
     if (!h || h.ny !== 0) return null;
     return h;
   }
@@ -278,7 +281,8 @@ export class PlayerController {
       this.events.push({ type: 'quickturn' });
     }
 
-    if (input.jumpPressed) this.jumpBuffer = P.JUMP_BUFFER; else this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
+    if (input.jumpPressed) this.jumpBuffer = P.JUMP_BUFFER;
+    else if (this.state !== PState.Traverse) this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (input.crouchPressed) this.crouchBufferT = 0; else this.crouchBufferT += dt;
     this.coyote = Math.max(0, this.coyote - dt);
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
@@ -407,6 +411,8 @@ export class PlayerController {
       if (!this.crouched || this.canStand()) { this.doJump(input); return; }
     }
     if (this.hSpeed > 3.2 && input.moveY > 0.3 && !this.crouched && this.tryVault(false, input)) return;
+    // walking into a ladder / pipe grabs it
+    if (input.moveY > 0.5 && this.stateTime > 0.25 && this.tryPipe(input, true)) return;
 
     // move
     this.vel.y = -2; // keep pressed to ground for step-down
@@ -526,7 +532,7 @@ export class PlayerController {
     if (this.vel.y < 0 && this.vel.y > -6 && this.hSpeed > 2.5 && this.tryVault(false, input, true)) return;
 
     const vyBefore = this.vel.y;
-    const r = this.move(dt, this.vel.y < 0 ? 0.25 : 0.0);
+    const r = this.move(dt, 0.28);
     if (r.grounded && vyBefore <= 0.5) {
       this.ground = r.ground;
       this.land(-vyBefore, input);
@@ -625,7 +631,17 @@ export class PlayerController {
     this.height += (P.H_SLIDE - this.height) * Math.min(1, dt * 20);
     const s = this.hSpeed;
     const ns = Math.max(3.8, s - 1.2 * dt);
-    this.vel.x *= ns / (s || 1); this.vel.z *= ns / (s || 1);
+    let dx = this.vel.x / (s || 1), dz = this.vel.z / (s || 1);
+    // limited steering while rolling
+    const w = this.wish(input);
+    if (w.mag > 0.1) {
+      const cur = Math.atan2(dx, dz), want = Math.atan2(w.x, w.z);
+      const dd = clamp(wrapAngle(want - cur), -2.2 * dt, 2.2 * dt);
+      dx = Math.sin(cur + dd); dz = Math.cos(cur + dd);
+    }
+    this.vel.x = dx * ns; this.vel.z = dz * ns;
+    // jump out of the second half of a roll
+    if (this.jumpBuffer > 0 && this.stateTime > P.ROLL_TIME * 0.45 && this.canStand()) { this.crouched = false; this.height = P.H_STAND; this.doJump(input); return; }
     this.vel.y = -2;
     const r = this.move(dt, P.STEP);
     if (!r.grounded) {
@@ -638,7 +654,6 @@ export class PlayerController {
       this.setState(PState.Ground);
       this.gaitPhase = Math.ceil(this.gaitPhase / Math.PI) * Math.PI;
     }
-    void input;
   }
 
   // ---- wall run -----------------------------------------------------------------------------
@@ -657,6 +672,7 @@ export class PlayerController {
         const hit = this.wallRay(this.pos.x, midY, this.pos.z, dx, dz, P.R + 0.55);
         if (!hit || (hit.box.flags & (F.NO_WALLRUN | F.PIPE | F.LADDER))) continue;
         const nx = hit.nx, nz = hit.nz;
+        if (faceWidth(hit.box, nx, nz) < 1.0) continue;
         const vn = this.vel.x * nx + this.vel.z * nz; // negative = into wall
         if (vn / s < -0.8) continue; // too head-on: that's a wall climb
         const ax0 = this.vel.x - nx * vn, az0 = this.vel.z - nz * vn;
@@ -778,6 +794,7 @@ export class PlayerController {
       if (!hit || (hit.box.flags & (F.PIPE | F.LADDER))) continue;
       const facing = -(fx * hit.nx + fz * hit.nz);
       if (facing < 0.72) continue;
+      if (faceWidth(hit.box, hit.nx, hit.nz) < 0.8) continue; // poles are not climbable walls
       // wall must be higher than a vault: check for something at head height
       const headHit = this.wallRay(this.pos.x, this.pos.y + 1.95, this.pos.z, -hit.nx, -hit.nz, reach + 0.2);
       if (!headHit) {
@@ -1075,7 +1092,12 @@ export class PlayerController {
         // try closer landing
         return false;
       }
-      if (!g) ly = Math.max(this.pos.y - 0.5, top.y - 1.2);
+      if (!g) {
+        // nothing to land on within reach: only a deliberate jump-vault launches into a drop,
+        // and never over barriers (railings)
+        if (!fromJump || (top.box.flags & F.NO_GRAB)) return false;
+        ly = Math.max(this.pos.y - 0.5, top.y - 1.2);
+      }
       // obstacle must be a vault-able height relative to the landing too
       const kind: TraverseKind = h > 1.05 ? 'kongvault' : 'speedvault';
       const dist = Math.hypot(lx - this.pos.x, lz - this.pos.z);
@@ -1103,7 +1125,7 @@ export class PlayerController {
   }
 
   // ---- pipes & ladders ----------------------------------------------------------------------
-  private tryPipe(input: InputFrame): boolean {
+  private tryPipe(input: InputFrame, fromGround = false): boolean {
     if (this.wallCooldown > 0.1 && this.pipe) return false;
     const list = this.world.query(this.pos.x - 1, this.pos.z - 1, this.pos.x + 1, this.pos.z + 1, this.pos.y, this.pos.y + 2.2);
     for (const b of list) {
@@ -1114,8 +1136,9 @@ export class PlayerController {
       const cz = Math.max(b.minZ, Math.min(this.pos.z, b.maxZ));
       const ox = this.pos.x - cx, oz = this.pos.z - cz;
       const d = Math.hypot(ox, oz);
-      if (d > P.R + 0.45 || d < 1e-4) continue;
+      if (d > P.R + (fromGround ? 0.2 : 0.45) || d < 1e-4) continue;
       const tx = -ox / d, tz = -oz / d; // toward pipe
+      if (fromGround && (this.fwdX * tx + this.fwdZ * tz < 0.6 || (b.flags & F.PIPE && b.minY > this.pos.y + 1.0))) continue;
       if (this.fwdX * tx + this.fwdZ * tz < 0.3 && !(input.moveY > 0.5 && (this.vel.x * tx + this.vel.z * tz) > 1)) continue;
       // axis-aligned outward normal for stable attachment
       let nx = 0, nz = 0;
@@ -1123,6 +1146,7 @@ export class PlayerController {
       if (this.pipe === b && this.stateTime < 0.4) continue;
       this.pipe = b; this.pipeNX = nx; this.pipeNZ = nz; this.pipeLadder = !!(b.flags & F.LADDER);
       this.setState(PState.Pipe);
+      this.jumpBuffer = 0;
       this.vel.x = this.vel.z = 0; this.vel.y = 0;
       this.events.push({ type: 'pipeGrab' });
       this.climbUsed = false;
@@ -1156,8 +1180,8 @@ export class PlayerController {
       if (input.moveY > 0.2) {
         const dirs: [number, number][] = [[-this.pipeNX, -this.pipeNZ], [this.fwdX, this.fwdZ]];
         for (const [dx, dz] of dirs) {
-          const hit = this.wallRay(this.pos.x, this.pos.y + 1.6, this.pos.z, dx, dz, 1.6);
-          if (!hit || (hit.box.flags & (F.PIPE | F.LADDER))) continue;
+          const hit = this.wallRay(this.pos.x, this.pos.y + 1.6, this.pos.z, dx, dz, 1.6, true);
+          if (!hit) continue;
           const l = this.detectLedge(hit.x, hit.z, hit.nx, hit.nz, 0.8, 2.6);
           if (l && l.canClimb) {
             this.startClimbOnto(l, 'mantle');
@@ -1166,11 +1190,15 @@ export class PlayerController {
             return;
           }
         }
-        // free-standing pipe/ladder top: step onto box top if possible
-        const l2 = { y: b.maxY, x: cx, z: cz };
-        if (!this.world.overlapCylinder(cx, b.maxY + 0.02, cz, P.R * 0.9, P.H_CROUCH) && b.maxX - b.minX > 0.5 && b.maxZ - b.minZ > 0.5) {
-          this.beginTraverse('pullup', { x: cx, y: l2.y, z: cz }, 0.6, -this.pipeNX, -this.pipeNZ, 0.5, l2.y);
-          this.tHand.x = tx; this.tHand.y = b.maxY; this.tHand.z = tz;
+        // otherwise mount any walkable surface within reach at the top (crane jibs, tanks, platforms)
+        const ins = [[-this.pipeNX, -this.pipeNZ], [-this.pipeNZ, this.pipeNX], [this.pipeNZ, -this.pipeNX]];
+        for (const [dx, dz] of ins) for (let d = 0.6; d <= 1.9; d += 0.25) {
+          const qx = this.pos.x + dx * d, qz = this.pos.z + dz * d;
+          const top = this.world.raycast(qx, b.maxY + 1.4, qz, 0, -1, 0, 1.9, notClimbable);
+          if (!top || top.ny !== 1 || top.y < b.maxY - 0.4) continue;
+          if (this.world.overlapCylinder(qx, top.y + 0.03, qz, P.R * 0.9, P.H_CROUCH)) continue;
+          this.beginTraverse('pullup', { x: qx, y: top.y, z: qz }, 0.65, dx, dz, 0.5, top.y);
+          this.tHand.x = this.pos.x + dx * 0.4; this.tHand.y = top.y; this.tHand.z = this.pos.z + dz * 0.4;
           return;
         }
       }
@@ -1181,7 +1209,7 @@ export class PlayerController {
       if (sup) { this.pos.y = sup.maxY; this.ground = sup; this.surface = sup.surface; this.setState(PState.Ground); return; }
       if (this.pos.y < b.minY - 0.6) { this.releasePipe(0.5, 0); return; }
     }
-    if (this.jumpBuffer > 0) {
+    if (this.jumpBuffer > 0 && this.stateTime > 0.2) {
       this.jumpBuffer = 0;
       // jump off: away from the pipe, toward camera if looking away
       let jx = this.fwdX, jz = this.fwdZ;

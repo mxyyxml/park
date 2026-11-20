@@ -34,6 +34,7 @@ export interface CityInfo {
   special: Record<string, number>; // named buildings
   spireRoute: { x: number; y: number; z: number }[];
   trainPath: { z: number; y: number; x0: number; x1: number };
+  atrium: { floor: number; stairBottom: { x: number; y: number; z: number }; stairTop: { x: number; y: number; z: number } };
   lanes: { x0: number; z0: number; x1: number; z1: number; dir: 'x' | 'z' }[];
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
 }
@@ -85,7 +86,8 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
     for (const l of lots) {
       const dh = rng.pick([-3, -1.5, 0, 0, 1.5, 3]);
       const bl: Building = {
-        id: b.buildings.length, ...l, h: Math.max(14, baseH + dh), block: j * COLS + i, kind,
+        id: b.buildings.length, ...l, h: Math.max(14, baseH + dh), block: j * COLS + i,
+        kind: kind === 'spire' || kind === 'atrium' || kind === 'construction' ? 'res' : kind,
         occ: [], edgeOpen: [false, false, false, false], collider: null,
       };
       b.buildings.push(bl); list.push(bl);
@@ -125,7 +127,7 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
   }
 
   // ---------------------------------------------------------------- special blocks: adjust lots
-  const lotsOf = (kind: BlockKind) => blockLots.find((l) => l[0].kind === kind)!;
+  const lotsOf = (kind: BlockKind) => { for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) if (LAYOUT[j][i] === kind) return blockLots[j * COLS + i]; throw new Error(kind); };
   const biggest = (l: Building[]) => l.reduce((m, x) => ((x.maxX - x.minX) * (x.maxZ - x.minZ) > (m.maxX - m.minX) * (m.maxZ - m.minZ) ? x : m));
   const spireB = biggest(lotsOf('spire'));
   spireB.kind = 'spire'; spireB.h = 78; special.spire = spireB.id;
@@ -340,8 +342,8 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
     doors.push({ bl: c, axis, side: -1, lo: mid - hw, hi: mid + hw });
     if (d > 0.3) {
       // taller end: ladder / climbable face up from the bridge deck
-      const wallX = axis === 'x' ? (hiB === c ? c.minX : a.maxX) : mid + 0.9;
-      const wallZ = axis === 'x' ? mid + 0.9 : (hiB === c ? c.minZ : a.maxZ);
+      const wallX = axis === 'x' ? (hiB === c ? c.minX : a.maxX) : mid;
+      const wallZ = axis === 'x' ? mid : (hiB === c ? c.minZ : a.maxZ);
       const nx = axis === 'x' ? (hiB === c ? -1 : 1) : 0, nz = axis === 'z' ? (hiB === c ? -1 : 1) : 0;
       if (d > 1.4) P.wallLadder(b, wallX, wallZ, nx, nz, y, hiB.h);
     }
@@ -360,7 +362,7 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
 
   // ---------------------------------------------------------------- set pieces
   spireRoute = buildSpire(b, spireB, rng, edges, neighbours, addCollectible);
-  buildAtrium(b, atriumB, atriumFloor, rng, neighbours, edges);
+  const atriumInfo = buildAtrium(b, atriumB, atriumFloor, rng, neighbours, edges);
   buildSkeletonAndCrane(b, consB, rng, edges, blockLots, addCollectible);
 
   // ---------------------------------------------------------------- parapets & roof props
@@ -423,6 +425,7 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
     special,
     spireRoute,
     trainPath,
+    atrium: atriumInfo,
     lanes: outLanes,
     bounds: { minX: X0, maxX: -X0, minZ: Z0, maxZ: -Z0 },
   };
@@ -551,6 +554,7 @@ function roofProps(b: WorldBuilder, bl: Building, rng: Rng, lanes: { x0: number;
       const r = [x - pw / 2, z - pd / 2, x + pw / 2, z + pd / 2] as const;
       if (!b.free(bl, r[0], r[1], r[2], r[3], 0.9)) continue;
       if (tall && nearLane(lanes, r[0], r[1], r[2], r[3])) continue;
+      if (!tall && nearLane(laneEnds, r[0], r[1], r[2], r[3], 1.8)) continue;
       b.occupy(bl, r[0], r[1], r[2], r[3]);
       place(x, z);
       return true;
@@ -558,6 +562,12 @@ function roofProps(b: WorldBuilder, bl: Building, rng: Rng, lanes: { x0: number;
     return false;
   };
   const fr = (x: number, z: number) => new Frame(x, y, z, rng.int(0, 3));
+  // the last few metres before every traversal edge stay clear for the run-up
+  const laneEnds = lanes.map((l) => {
+    const L = Math.hypot(l.x1 - l.x0, l.z1 - l.z0) || 1;
+    const k = Math.max(0, 1 - 6 / L);
+    return { x0: l.x0 + (l.x1 - l.x0) * k, z0: l.z0 + (l.z1 - l.z0) * k, x1: l.x1, z1: l.z1 };
+  });
   if (bl.kind === 'garden') {
     const n = Math.floor(area / 60);
     for (let i = 0; i < n; i++) tryPlace(2.2, 2.2, true, (x, z) => P.planter(b, x - 1.1, y, z - 1.1, x + 1.1, z + 1.1, R, true));
@@ -618,54 +628,35 @@ function buildSpire(b: WorldBuilder, bl: Building, rng: Rng, edges: { a: number;
   const nbs = neighbours.filter((n) => n.a === bl || n.b === bl).map((n) => (n.a === bl ? n.b : n.a));
   const startB = nbs.length ? nbs.reduce((m, x) => (x.h < m.h ? x : m)) : null;
   let y = (startB ? startB.h : 26) + 1.3;
-  // perimeter param
-  const W = maxX - minX, D = maxZ - minZ;
-  const per = 2 * (W + D);
-  // start on the side facing the start neighbour
-  let s = 0;
-  if (startB) {
-    const scx = (startB.minX + startB.maxX) / 2, scz = (startB.minZ + startB.maxZ) / 2;
-    if (startB.maxZ <= minZ + 0.1) s = W / 2;           // north side (−z): along top edge
-    else if (startB.minX >= maxX - 0.1) s = W + D / 2;  // east
-    else if (startB.minZ >= maxZ - 0.1) s = W + D + W / 2; // south
-    else s = W + D + W + D / 2;                          // west
-    void scx; void scz;
-  }
-  const point = (t: number): [number, number, number, number] => {
-    t = ((t % per) + per) % per;
-    if (t < W) return [minX + t, minZ, 0, -1];
-    t -= W; if (t < D) return [maxX, minZ + t, 1, 0];
-    t -= D; if (t < W) return [maxX - t, maxZ, 0, 1];
-    t -= W; return [minX, maxZ - t, -1, 0];
-  };
-  const pw = 2.6, depth = 2.5;
+  // switchback climb on the face that looks toward the start roof (no corner leaps)
+  let fx0: number, fz0: number, tx: number, tz: number, nx: number, nz: number, faceLen: number;
+  const sc = startB ? [(startB.minX + startB.maxX) / 2, (startB.minZ + startB.maxZ) / 2] : [maxX + 10, (minZ + maxZ) / 2];
+  if (startB && startB.maxZ <= minZ + 0.1) { fx0 = minX; fz0 = minZ; tx = 1; tz = 0; nx = 0; nz = -1; faceLen = maxX - minX; }
+  else if (startB && startB.minZ >= maxZ - 0.1) { fx0 = minX; fz0 = maxZ; tx = 1; tz = 0; nx = 0; nz = 1; faceLen = maxX - minX; }
+  else if (startB && startB.maxX <= minX + 0.1) { fx0 = minX; fz0 = minZ; tx = 0; tz = 1; nx = -1; nz = 0; faceLen = maxZ - minZ; }
+  else { fx0 = maxX; fz0 = minZ; tx = 0; tz = 1; nx = 1; nz = 0; faceLen = maxZ - minZ; }
+  const pw = 2.6, depth = 2.5, stepU = 3.3;
+  // start at the part of the face nearest the start roof
+  let u = Math.max(pw / 2 + 0.3, Math.min(faceLen - pw / 2 - 0.3, (sc[0] - fx0) * tx + (sc[1] - fz0) * tz));
+  let dir = u < faceLen / 2 ? 1 : -1;
   let i = 0;
   while (y < bl.h - 1.0) {
-    let [px, pz, nx, nz] = point(s);
-    // keep platforms off corners
-    const corner = (t: number) => { const tt = ((t % per) + per) % per; const cs = [0, W, W + D, 2 * W + D, per]; return cs.some((c) => Math.abs(tt - c) < pw * 0.75); };
-    if (corner(s)) { s += pw * 0.8; [px, pz, nx, nz] = point(s); }
-    // platform box
-    const tx = -nz, tz = nx; // tangent
-    const x0 = Math.min(px + nx * depth - tx * pw / 2, px - tx * pw / 2), x1 = Math.max(px + nx * depth + tx * pw / 2, px + tx * pw / 2);
-    const z0 = Math.min(pz + nz * depth - tz * pw / 2, pz - tz * pw / 2), z1 = Math.max(pz + nz * depth + tz * pw / 2, pz + tz * pw / 2);
-    // skip spots that would intersect neighbouring buildings
-    const blocked = b.world.query(x0, z0, x1, z1, y - 0.35, y + 2.2).some((o) => o !== bl.collider &&
-      o.minX < x1 && o.maxX > x0 && o.minZ < z1 && o.maxZ > z0 && o.minY < y + 2.2 && o.maxY > y - 0.35);
-    if (blocked) { s += pw * 0.6; continue; }
+    const px = fx0 + tx * u, pz = fz0 + tz * u;
+    const x0 = Math.min(px - tx * pw / 2, px + nx * depth + tx * pw / 2), x1 = Math.max(px - tx * pw / 2, px + nx * depth + tx * pw / 2);
+    const z0 = Math.min(pz - tz * pw / 2, pz + nz * depth + tz * pw / 2), z1 = Math.max(pz - tz * pw / 2, pz + nz * depth + tz * pw / 2);
     b.solid(i % 5 === 4 ? 'red' : 'concrete', x0, y - 0.35, z0, x1, y, z1, Surface.Concrete, 0, { bevel: 0.04 });
     if (b.visual) {
-      // brackets underneath
       const g = b.g('metalDark', px, pz);
       beam(g, px + nx * depth * 0.9, y - 0.35, pz + nz * depth * 0.9, px, y - 1.6, pz, 0.12, 0.12);
-      b.vbox('lamp', Math.min(px, px + nx * 0.15) - Math.abs(tx) * 0.8, y - 0.4, Math.min(pz, pz + nz * 0.15) - Math.abs(tz) * 0.8,
-        Math.max(px, px + nx * 0.15) + Math.abs(tx) * 0.8, y - 0.36, Math.max(pz, pz + nz * 0.15) + Math.abs(tz) * 0.8);
+      b.vbox('lamp', Math.min(x0, x1) + 0.2 * Math.abs(tx), y - 0.4, Math.min(z0, z1) + 0.2 * Math.abs(tz), Math.max(x0, x1) - 0.2 * Math.abs(tx), y - 0.37, Math.max(z0, z1) - 0.2 * Math.abs(tz));
     }
     route.push({ x: px + nx * depth / 2, y, z: pz + nz * depth / 2 });
     if (i % 7 === 6) addCollectible(px + nx * depth / 2, y + 1.2, pz + nz * depth / 2);
     i++;
     y += 1.45;
-    s += pw + 0.9;
+    let nu = u + dir * stepU;
+    if (nu < pw / 2 + 0.3 || nu > faceLen - pw / 2 - 0.3) { dir = -dir; nu = u + dir * stepU; }
+    u = nu;
   }
   // tower top
   const h = bl.h;
@@ -681,14 +672,14 @@ function buildSpire(b: WorldBuilder, bl: Building, rng: Rng, edges: { a: number;
 }
 
 function buildAtrium(b: WorldBuilder, bl: Building, floorY: number, rng: Rng, neighbours: { a: Building; b: Building; gap: number; axis: 'x' | 'z'; lo: number; hi: number; aSide: number }[],
-                     edges: Edge[]) {
+                     edges: Edge[]): CityInfo['atrium'] {
   const { minX, minZ, maxX, maxZ } = bl;
   const h = bl.h, ceil = h - 0.5;
   const R = () => rng.next();
   // floor surface
   b.vbox('interiorFloor', minX, floorY - 0.4, minZ, maxX, floorY, maxZ);
   // roof slab with a stair hole
-  const holeX0 = minX + 2, holeX1 = minX + 4.5, holeZ0 = minZ + 3, holeZ1 = minZ + 3 + 7.5;
+  const holeX0 = minX + 2, holeX1 = minX + 4.5, holeZ0 = minZ + 5.5, holeZ1 = minZ + 5.5 + 7.5;
   const slab = (x0: number, z0: number, x1: number, z1: number) => {
     if (x1 - x0 < 0.05 || z1 - z0 < 0.05) return;
     b.solid('concrete', x0, ceil, z0, x1, h, z1, Surface.Gravel, 0, { bevel: 0.03 });
@@ -703,8 +694,8 @@ function buildAtrium(b: WorldBuilder, bl: Building, floorY: number, rng: Rng, ne
   const steps = Math.ceil((h - floorY) / 0.38);
   for (let k = 0; k < steps; k++) {
     const sy = floorY + (k + 1) * (h - floorY) / steps;
-    const z0 = holeZ1 - (k + 1) * (7.0 / steps) - 0.25;
-    b.solid('concreteDark', holeX0 + 0.05, floorY, z0, holeX1 - 0.05, sy, z0 + 7.0 / steps + 0.01, Surface.Concrete, 0, { bevel: 0.01 });
+    const z0 = holeZ1 - (k + 1) * (7.5 / steps);
+    b.solid('concreteDark', holeX0 + 0.05, floorY, z0, holeX1 - 0.05, sy, z0 + 7.5 / steps + 0.01, Surface.Concrete, 0, { bevel: 0.01 });
   }
   P.railing(b, holeX1 + 0.05, floorY, holeZ0, holeX1 + 0.05, holeZ1, false);
   // perimeter walls with openings facing neighbours
@@ -761,7 +752,7 @@ function buildAtrium(b: WorldBuilder, bl: Building, floorY: number, rng: Rng, ne
   // interior content: columns, desks, partitions, a low duct to slide under
   const W = maxX - minX, D = maxZ - minZ;
   for (let x = minX + 6; x < maxX - 3; x += 7) for (let z = minZ + 6; z < maxZ - 3; z += 7) {
-    if (x < holeX1 + 1.5 && z < holeZ1 + 1 && z > holeZ0 - 2) continue;
+    if (x < holeX1 + 1.5 && z < holeZ1 + 2 && z > holeZ0 - 2) continue;
     b.solid('concrete', x - 0.3, floorY, z - 0.3, x + 0.3, ceil, z + 0.3, Surface.Concrete, F.NO_GRAB, { bevel: 0.03 });
   }
   // desk rows (0.75 m: vaultable)
@@ -795,7 +786,8 @@ function buildAtrium(b: WorldBuilder, bl: Building, floorY: number, rng: Rng, ne
   }
   b.lights.push({ x: minX + W * 0.3, y: ceil - 0.6, z: minZ + D * 0.5, color: 0xfff1e0, intensity: 30, distance: 22 });
   b.lights.push({ x: minX + W * 0.75, y: ceil - 0.6, z: minZ + D * 0.5, color: 0xfff1e0, intensity: 30, distance: 22 });
-  // lower facade to podium is built by buildBuilding (atrium variant)
+  const sx = (holeX0 + holeX1) / 2;
+  return { floor: floorY, stairBottom: { x: sx, y: floorY, z: holeZ1 + 1.2 }, stairTop: { x: sx, y: h, z: holeZ0 - 1.4 } };
 }
 
 function buildSkeletonAndCrane(b: WorldBuilder, bl: Building, rng: Rng, edges: Edge[], blockLots: Building[][], addCollectible: (x: number, y: number, z: number) => void) {
@@ -838,7 +830,7 @@ function buildSkeletonAndCrane(b: WorldBuilder, bl: Building, rng: Rng, edges: E
   const mastZ = target ? Math.min(maxZ - 2.5, Math.max(minZ + 2.5, (target.minZ + target.maxZ) / 2)) : maxZ - 2.5;
   const jibY = Math.max(top + 2.6, target ? target.h + 3.2 : top + 6);
   const mastTop = jibY + 6;
-  b.cbox(mastX - 1, 0, mastZ - 1, mastX + 1, jibY - 0.6, mastZ + 1, Surface.Metal, F.LADDER);
+  b.cbox(mastX - 1, 0, mastZ - 1, mastX + 1, jibY - 0.25, mastZ + 1, Surface.Metal);
   const jibLen = target ? target.minX - mastX + 6 : 40;
   // jib walkway (balance beam with a mesh deck)
   const jx0 = mastX - 1, jx1 = mastX + jibLen;
@@ -889,10 +881,10 @@ function buildSkeletonAndCrane(b: WorldBuilder, bl: Building, rng: Rng, edges: E
   P.railing(b, jx0 + 1, jibY, mastZ - 0.48, jx1 - 0.2, mastZ - 0.48, false, 1.0);
   b.anchors.push({ type: 'crane', x: mastX, y: jibY, z: mastZ, a: jibLen });
   addCollectible(jx1 - 1, jibY + 1.2, mastZ);
-  // ladder up the mast to the jib
-  P.wallLadder(b, mastX - 1, mastZ, -1, 0, top, jibY - 0.6);
+  // ladder up the side of the mast to the jib walkway
+  P.wallLadder(b, mastX, mastZ - 1, 0, -1, top, jibY - 0.25);
   if (target) {
-    edges.push({ a: bl.id, b: target.id, kind: 'crane', ax: mastX - 1.3, az: mastZ, bx: target.minX + 4, bz: mastZ });
+    edges.push({ a: bl.id, b: target.id, kind: 'crane', ax: mastX, az: mastZ - 1.55, bx: target.minX + 4, bz: mastZ });
   }
 }
 

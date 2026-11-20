@@ -237,7 +237,7 @@ export class CollisionWorld {
           const downPen = head - b.minY;
           // choose resolution
           let pen = hPen, k = 0;
-          const stepOk = upPen <= stepHeight && vel.y <= 2.0;
+          const stepOk = upPen <= stepHeight && (vel.y <= 2.0 || upPen < 0.3);
           if (stepOk || upPen < hPen) { pen = upPen; k = 1; }
           if (downPen < pen && vel.y > -1 && !stepOk) { pen = downPen; k = 2; }
           // prioritise resolving by the smallest needed correction among boxes, but steps last
