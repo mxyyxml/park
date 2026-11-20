@@ -165,6 +165,12 @@ export class Game {
       const t = this.trial ?? this.trials.find((x) => x.id === params.get('bot')) ?? this.trials[1];
       if (this.mode === 'free') this.player.spawn(t.start.x, t.start.y, t.start.z, t.start.yaw);
       this.autopilot = new Bot(this.builder.world, t.wps);
+      // test hook: fast-forward the autopilot run without rendering
+      const ff = Number(params.get('ff') || 0);
+      for (let i = 0; i < ff * 120; i++) { this.player.update(DT, this.autopilot.step(this.player, DT)); if (this.mode === 'trial' && this.countdown <= 0) this.trialTime += DT; }
+      this.countdown = Math.min(this.countdown, ff > 0 ? 0 : this.countdown);
+      if (ff > 0 && this.mode === 'trial') this.trialRunning = true;
+      this.rig.eye.x = this.player.height - 0.12;
     }
     requestAnimationFrame(this.frame);
   }

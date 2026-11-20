@@ -162,7 +162,7 @@ function buildShoe(white: THREE.Material, red: THREE.Material, dark: THREE.Mater
   return g;
 }
 
-interface Arm { upper: THREE.Mesh; fore: THREE.Mesh; cuff: THREE.Mesh; wrist: THREE.Mesh; hand: Hand; elbow: THREE.Mesh;
+interface Arm { upper: THREE.Mesh; fore: THREE.Mesh; cuff: THREE.Mesh; wrist: THREE.Mesh; hand: Hand; elbow: THREE.Mesh; shoulderCap: THREE.Mesh;
   pos: THREE.Vector3; vel: THREE.Vector3; side: number }
 interface Leg { thigh: THREE.Mesh; shin: THREE.Mesh; knee: THREE.Mesh; shoe: THREE.Group; side: number }
 
@@ -220,9 +220,12 @@ export class RunnerBody {
       const wrist = new THREE.Mesh(limbGeo(RunnerBody.FORE * 0.26, 0.031, 0.027, 0.002, 0.8), m.skin);
       const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.044, 12, 8), m.jacket);
       const hand = new Hand(side, m.skin, m.glove, m.accent);
-      for (const o of [upper, fore, cuff, wrist, elbow]) { o.castShadow = true; o.receiveShadow = true; }
-      this.armRoot.add(upper, fore, cuff, wrist, elbow, hand.group);
-      this.arms.push({ upper, fore, cuff, wrist, hand, elbow, pos: V(), vel: V(), side });
+      const shoulderCap = new THREE.Mesh(new THREE.SphereGeometry(0.068, 14, 10), m.jacket);
+      shoulderCap.scale.set(1, 0.85, 1);
+      shoulderCap.visible = !firstPerson;
+      for (const o of [upper, fore, cuff, wrist, elbow, shoulderCap]) { o.castShadow = true; o.receiveShadow = true; }
+      this.armRoot.add(upper, fore, cuff, wrist, elbow, shoulderCap, hand.group);
+      this.arms.push({ upper, fore, cuff, wrist, hand, elbow, shoulderCap, pos: V(), vel: V(), side });
     }
     for (const side of [-1, 1]) {
       const thigh = new THREE.Mesh(limbGeo(RunnerBody.THIGH, 0.088, 0.062, 0.01, 0.92), m.pants);
@@ -234,10 +237,10 @@ export class RunnerBody {
       this.legs.push({ thigh, shin, knee, shoe, side });
     }
     // torso (jacket) — lathe profile, front zipper & red stripe
-    const prof = [[0.002, -0.02], [0.13, 0.0], [0.15, 0.1], [0.155, 0.22], [0.17, 0.36], [0.175, 0.44], [0.12, 0.5], [0.06, 0.53], [0.002, 0.535]]
+    const prof = [[0.002, -0.02], [0.14, 0.0], [0.155, 0.1], [0.16, 0.22], [0.185, 0.36], [0.2, 0.45], [0.15, 0.53], [0.07, 0.56], [0.002, 0.565]]
       .map(([r, y]) => new THREE.Vector2(r, y));
     const tg = new THREE.LatheGeometry(prof, 18);
-    tg.scale(1, 1, 0.66);
+    tg.scale(1, 1, 0.62);
     this.torso = new THREE.Mesh(tg, m.jacket);
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.5, 0.012), m.accent);
     stripe.position.set(0.03, 0.26, 0.112);
@@ -253,9 +256,13 @@ export class RunnerBody {
       skull.scale.set(0.95, 1.1, 1.05);
       const hair = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), m.dark);
       hair.position.y = 0.02;
-      const neck = new THREE.Mesh(limbGeo(0.1, 0.05, 0.045), m.skin);
-      neck.position.y = -0.17;
-      this.head.add(skull, hair, neck);
+      const neck = new THREE.Mesh(limbGeo(0.07, 0.048, 0.045), m.skin);
+      neck.position.y = -0.155;
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.025, 8, 16), m.jacket);
+      collar.rotation.x = Math.PI / 2; collar.position.y = -0.15;
+      const nose = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), m.skin);
+      nose.position.set(0, -0.01, -0.105);
+      this.head.add(skull, hair, neck, collar, nose);
       this.root.add(this.head);
     }
   }
@@ -542,6 +549,7 @@ export class RunnerBody {
       const Sw = shoulder.clone().applyMatrix4(view), Ew = E.applyMatrix4(view), Tw = Tt.applyMatrix4(view);
       const rightW = V().setFromMatrixColumn(view, 0);
       setSegment(arm.upper, Sw, Ew, rightW);
+      arm.shoulderCap.position.copy(Sw);
       arm.elbow.position.copy(Ew);
       const foreDir = V().subVectors(Tw, Ew).normalize();
       const foreEnd = V().copy(Ew).addScaledVector(foreDir, RunnerBody.FORE * 0.72);

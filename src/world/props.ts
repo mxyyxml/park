@@ -257,7 +257,10 @@ export function dish(b: WorldBuilder, x: number, y: number, z: number, r = 0.8) 
   cylinder(b.g('metalDark', x, z), x, y + 0.6, z, 0.07, 1.2, 'y', 8);
   const g = b.g('metalPainted', x, z);
   g.colCur = [0.95, 0.95, 0.95];
-  sphere(g, x, y + 1.3, z + 0.1, r, r, 0.22, 16);
+  // shallow dish (cone frustum) facing up-south, feed arm and LNB
+  cylinder(g, x, y + 1.35, z + 0.08, 0.12, 0.28, 'z', 20, true, r);
+  beam(b.g('metalDark', x, z), x, y + 1.35, z + 0.22, x, y + 1.35, z + 0.9, 0.025, 0.025);
+  box(b.g('metalDark', x, z), x - 0.05, y + 1.3, z + 0.88, x + 0.05, y + 1.4, z + 0.98);
 }
 
 /** Railing between two points (axis-aligned). glass = glass panels else metal bars. */

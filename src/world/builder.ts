@@ -2,7 +2,7 @@ import { Box, CollisionWorld, F, Surface } from '../physics/collision';
 import type { Zipline } from '../player/PlayerController';
 import { box, BoxOpts, GeoBatch, MatKey } from './geo';
 
-export const CHUNK = 48;
+export const CHUNK = 64;
 
 export interface Building {
   id: number;

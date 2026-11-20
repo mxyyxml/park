@@ -104,9 +104,10 @@ export function gravelSet(size = 512): TexSet {
     // stones: cellular-ish via thresholded noise layers
     const a = vnoise(u * 90, v * 90, 90, 1), b2 = vnoise(u * 160, v * 160, 160, 2), c = fbm(u * 6, v * 6, 6, 3, 3);
     const stone = Math.max(a, b2 * 0.9);
-    const g = 0.48 + stone * 0.25 + (c - 0.5) * 0.12;
-    return { r: g * 1.02, g: g, b: g * 0.97, h: stone * 1.4, rough: 0.95 };
-  }, 3.0);
+    const big = fbm(u * 3, v * 3, 3, 3, 17);
+    const g = 0.6 + stone * 0.1 + (c - 0.5) * 0.1 + (big - 0.5) * 0.12;
+    return { r: g * 1.03, g: g, b: g * 0.96, h: stone * 0.5, rough: 0.95 };
+  }, 1.1);
 }
 
 export function roofSet(size = 512): TexSet {
