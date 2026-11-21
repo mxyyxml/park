@@ -62,7 +62,8 @@ export type PEvent =
   | { type: 'zipEnd' }
   | { type: 'bump'; speed: number }
   | { type: 'death'; cause: 'fall' | 'void' }
-  | { type: 'quickturn' };
+  | { type: 'quickturn' }
+  | { type: 'mantleJump' };
 
 export interface Ledge {
   y: number; x: number; z: number; nx: number; nz: number;
@@ -101,7 +102,7 @@ export const P = {
   HARD_LAND: 12.5,
   FATAL_LAND: 17.5,
   FATAL_LAND_ROLL: 20.5,
-  WALLRUN_MIN_SPEED: 4.2,
+  WALLRUN_MIN_SPEED: 3.6,
   HANG_DROP: 2.02, // feet below ledge while hanging
 };
 
@@ -669,7 +670,7 @@ export class PlayerController {
       // check both "diagonal forward" and pure side rays
       const dirs = [[rx, rz], [(rx + vx) * 0.7071, (rz + vz) * 0.7071]];
       for (const [dx, dz] of dirs) {
-        const hit = this.wallRay(this.pos.x, midY, this.pos.z, dx, dz, P.R + 0.55);
+        const hit = this.wallRay(this.pos.x, midY, this.pos.z, dx, dz, P.R + 0.85);
         if (!hit || (hit.box.flags & (F.NO_WALLRUN | F.PIPE | F.LADDER))) continue;
         const nx = hit.nx, nz = hit.nz;
         if (faceWidth(hit.box, nx, nz) < 1.0) continue;
@@ -680,7 +681,7 @@ export class PlayerController {
         if (along < P.WALLRUN_MIN_SPEED * 0.9) continue;
         if (this.wallCooldown > 0 && nx * this.lastWallNX + nz * this.lastWallNZ > 0.9) continue;
         // facing check: don't wall run if looking straight into the wall
-        if (-(this.fwdX * nx + this.fwdZ * nz) > 0.85) continue;
+        if (-(this.fwdX * nx + this.fwdZ * nz) > 0.92) continue;
         const ax = ax0 / along, az = az0 / along;
         // wall must be tall enough and continue ahead
         const head = this.wallRay(this.pos.x, this.pos.y + 1.75, this.pos.z, -nx, -nz, P.R + 0.8);
@@ -725,8 +726,11 @@ export class PlayerController {
     const gScale = 0.3 + 0.7 * smooth01(0.15, this.wallRunMax, t);
     this.vel.y = Math.max(-6, this.vel.y - P.G * gScale * dt);
     this.wallSpeed = Math.max(0, this.wallSpeed - 1.3 * dt);
-    this.vel.x = this.alongX * this.wallSpeed - this.wallNX * 0.8;
-    this.vel.z = this.alongZ * this.wallSpeed - this.wallNZ * 0.8;
+    // stick to the wall, closing any gap left from a wider entry quickly
+    const gapHit = this.wallRay(this.pos.x, this.pos.y + 1.0, this.pos.z, -this.wallNX, -this.wallNZ, P.R + 1.0);
+    const pull = 0.8 + (gapHit ? Math.max(0, gapHit.t - P.R - 0.03) * 10 : 0);
+    this.vel.x = this.alongX * this.wallSpeed - this.wallNX * pull;
+    this.vel.z = this.alongZ * this.wallSpeed - this.wallNZ * pull;
 
     if (this.jumpBuffer > 0 && t > 0.06) { this.wallJump(); return; }
     if (input.crouchPressed) { this.detachWall(1.6); return; }
@@ -735,7 +739,7 @@ export class PlayerController {
     if (r.grounded) { this.ground = r.ground; this.land(-Math.min(0, this.vel.y), input); return; }
     // wall still there?
     const midY = this.pos.y + 1.0;
-    const hit = this.wallRay(this.pos.x, midY, this.pos.z, -this.wallNX, -this.wallNZ, P.R + 0.45);
+    const hit = this.wallRay(this.pos.x, midY, this.pos.z, -this.wallNX, -this.wallNZ, P.R + 0.9);
     if (hit) { this.wallPointX = hit.x; this.wallPointZ = hit.z; this.wallSurface = hit.box.surface; }
     // ledge at end of wall run (wall top within reach)? grab it
     if (!this.wallRay(this.pos.x, this.pos.y + 1.7, this.pos.z, -this.wallNX, -this.wallNZ, P.R + 0.45) && hit) {
@@ -1025,6 +1029,18 @@ export class PlayerController {
       this.height = P.H_STAND - 0.5 * Math.sin(Math.PI * p);
     }
     this.pos.x = hx; this.pos.y = hy; this.pos.z = hz;
+    // mantle jump (Dying Light style): jump in the back half of a climb/vault to launch off the top
+    const late = k === 'pullup' ? 0.62 : 0.5;
+    if (this.jumpBuffer > 0 && p >= late && !this.world.overlapCylinder(hx, hy + 0.02, hz, P.R * 0.95, P.H_STAND - 0.05)) {
+      this.jumpBuffer = 0;
+      const sp = Math.hypot(this.tExit.x, this.tExit.z) + 2.4;
+      this.vel.x = this.tDirX * sp; this.vel.z = this.tDirZ * sp; this.vel.y = P.JUMP_V + 0.9;
+      this.height = P.H_STAND; this.crouched = false;
+      this.setState(PState.Air); this.airEntrySpeed = sp; this.airTime = 0; this.jumpHoldT = 0;
+      this.fallStartY = this.pos.y; this.climbUsed = false;
+      this.events.push({ type: 'mantleJump' }, { type: 'jump', speed: sp, surface: this.surface });
+      return;
+    }
     if (this.stateTime >= this.tDur) {
       this.pos.x = to.x; this.pos.y = to.y; this.pos.z = to.z;
       this.vel.x = this.tExit.x; this.vel.z = this.tExit.z; this.vel.y = 0;

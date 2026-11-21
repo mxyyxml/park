@@ -243,4 +243,29 @@ describe('parkour moves', () => {
     for (let i = 0; i < 120; i++) p.update(DT, { moveX: 0, moveY: 1, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false, crouchPressed: false, sprint: true, walk: false, quickTurn: false });
     expect(p.pos.z).toBeGreaterThan(-10);
   });
+
+  it('mantle jump: jumping out of a climb launches further than the plain mantle', () => {
+    const run2 = (jumpOut: boolean) => {
+      const w = flatWorld();
+      w.add(-3, 0, -30, 3, 1.2, -12); // waist-high platform
+      const p = makePlayer(w);
+      let pressed = false;
+      run(p, 4, (_t, q) => {
+        const s: any = { moveY: 1, sprint: true };
+        if (jumpOut && q.state === PState.Traverse && q.tProgress > 0.6 && !pressed) { s.jump = true; pressed = true; }
+        return s;
+      }, (q) => q.pos.z < -12.5 && q.state === PState.Ground && q.stateTime > 0.05);
+      return p;
+    };
+    const plain = run2(false), jumped = run2(true);
+    expect(jumped.pos.z).toBeLessThan(plain.pos.z - 2); // carried well past where the plain mantle stops
+  });
+
+  it('wall run starts from a wider gap and holds the wall', () => {
+    const w = flatWorld();
+    w.add(1.0, 0, -60, 1.6, 6, -8);
+    const p = makePlayer(w, 0.15, 0, 0); // 0.85 m from the wall face
+    const r = run(p, 3, (_t, q) => ({ moveY: 1, sprint: true, jump: q.pos.z < -9 && q.state === PState.Ground }));
+    expect(r.states.has(PState.WallRun)).toBe(true);
+  });
 });

@@ -63,6 +63,7 @@ export class CameraRig {
         case 'handplant': this.dip.v -= 0.5; break;
         case 'death': this.trauma = 1; break;
         case 'roll': this.rollPitch = 0; break;
+        case 'mantleJump': this.dip.v -= 1.2; this.pitchKick.v += 1.4; break;
       }
     }
   }

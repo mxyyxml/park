@@ -478,8 +478,231 @@ def build_shoe():
     print('shoe tris', sum(len(p.vertices) - 2 for p in shoe.data.polygons))
     export(os.path.join(OUT, 'shoe.glb'), [shoe])
 
+# ---------------------------------------------------------------------------------------------
+# BODY: lofted pieces in the game's frame, sculpted by displacement, fused where needed
+# ---------------------------------------------------------------------------------------------
+def loft_rings(name, rings, closed_ends=True):
+    """rings: list of lists of game-frame points (same count per ring, closed loops)."""
+    me = bpy.data.meshes.new(name); bm = bmesh.new()
+    uv = bm.loops.layers.uv.new()
+    rows = [[bm.verts.new(B(*p)) for p in r] for r in rings]
+    n = len(rows[0])
+    for i in range(len(rows) - 1):
+        for j in range(n):
+            f = bm.faces.new((rows[i][j], rows[i][(j + 1) % n], rows[i + 1][(j + 1) % n], rows[i + 1][j]))
+            for k, l in enumerate(f.loops):
+                l[uv].uv = ((j + (1 if k in (1, 2) else 0)) / n * 2, (i + (1 if k in (2, 3) else 0)) / len(rows) * 4)
+    if closed_ends:
+        for r in (rows[0], rows[-1]): bm.faces.new(r)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(me); bm.free()
+    ob = bpy.data.objects.new(name, me); bpy.context.collection.objects.link(ob)
+    return ob
+
+def ring(y, rx, rz, n, fn=None, e=2.6):
+    """superellipse cross-section at height y; fn(angle) -> radial offset (sculpt detail).
+    Angle 0 = +X, pi/2 = +Z (back), 3pi/2 = -Z (front)."""
+    pts = []
+    for j in range(n):
+        a = j / n * math.pi * 2
+        c, s_ = math.cos(a), math.sin(a)
+        px = rx * math.copysign(abs(c) ** (2 / e), c)
+        pz = rz * math.copysign(abs(s_) ** (2 / e), s_)
+        d = fn(a) if fn else 0.0
+        L = math.hypot(px, pz) or 1
+        pts.append((px + px / L * d, y, pz + pz / L * d))
+    return pts
+
+def build_torso():
+    reset()
+    N, R = 48, 44
+    rings = []
+    for i in range(R + 1):
+        t = i / R
+        y = -0.02 + 0.585 * t
+        # jacket silhouette: hips, waist, chest, shoulders sloping into the neck
+        rx = 0.15 + 0.018 * math.sin(math.pi * min(1, t * 1.4)) + 0.045 * smoothstep(0.45, 0.78, t) - 0.13 * smoothstep(0.86, 1.0, t) ** 1.3
+        rz = 0.095 + 0.018 * smoothstep(0.4, 0.72, t) - 0.05 * smoothstep(0.88, 1.0, t)
+        def detail(a, t=t):
+            d = 0.0
+            front = -math.sin(a)  # 1 at the front (-Z)
+            back = math.sin(a)
+            d += 0.004 * math.exp(-((a - 3 * math.pi / 2) / 0.05) ** 2)  # zipper ridge
+            d += 0.006 * smoothstep(0.5, 0.7, t) * (1 - smoothstep(0.75, 0.85, t)) * max(0, front) ** 3  # chest
+            d += 0.005 * smoothstep(0.55, 0.8, t) * max(0, back) ** 2 * abs(math.cos(a)) * 1.5  # shoulder blades
+            d += 0.0025 * smoothstep(0.15, 0.5, t) * (1 - smoothstep(0.5, 0.6, t)) * math.sin(a * 6 + t * 9)  # waist folds
+            if t < 0.07: d += 0.004 + 0.0012 * math.sin(a * 40)  # ribbed hem
+            return d
+        rings.append(ring(y, rx, rz, N, detail))
+    ob = loft_rings('torso', rings)
+    sub = ob.modifiers.new('sub', 'SUBSURF'); sub.levels = 1
+    apply_mods(ob)
+    jacket, accent, dark = mat('jacket', (0.91, 0.91, 0.9), 0.85), mat('accent', (0.78, 0.09, 0.12), 0.55), mat('dark', (0.13, 0.135, 0.14), 0.75)
+    for m in (jacket, accent): ob.data.materials.append(m)
+    for poly in ob.data.polygons:  # red stripe panel down the left side
+        x, y, z = G(poly.center)
+        if 0.02 < y < 0.52 and abs(math.atan2(z, x) - math.radians(200)) < 0.12: poly.material_index = 1
+    # collar and hood folded at the back of the neck
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.07, minor_radius=0.024, location=B(0, 0.565, 0.005))
+    collar = bpy.context.active_object; collar.scale = (1.15, 1, 1.0)
+    bpy.ops.object.transform_apply(scale=True)
+    collar.data.materials.append(jacket)
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.1, location=B(0, 0.53, 0.085))
+    hood = bpy.context.active_object; hood.scale = (1.15, 0.55, 0.45)
+    bpy.ops.object.transform_apply(scale=True)
+    hood.data.materials.append(jacket)
+    # zipper pull
+    bpy.ops.mesh.primitive_cube_add(size=1, location=B(0, 0.5, -0.112))
+    zp = bpy.context.active_object; zp.scale = (0.01, 0.025, 0.004); zp.data.materials.append(dark)
+    select_only(ob, collar, hood, zp); bpy.ops.object.join()
+    ob = bpy.context.active_object; ob.name = 'torso'
+    bpy.ops.object.shade_smooth()
+    export(os.path.join(OUT, 'torso.glb'), [ob])
+
+def build_pelvis():
+    reset()
+    N, R = 40, 12
+    rings = [ring(-0.08 + 0.16 * i / R, 0.15 - 0.01 * abs(i / R - 0.5), 0.1, N, None, 3.2) for i in range(R + 1)]
+    ob = loft_rings('pelvis', rings)
+    sub = ob.modifiers.new('sub', 'SUBSURF'); sub.levels = 1
+    apply_mods(ob)
+    pants, dark, metal = mat('pants', (0.17, 0.18, 0.2), 0.9), mat('dark', (0.13, 0.135, 0.14), 0.75), mat('metal', (0.6, 0.6, 0.62), 0.3)
+    ob.data.materials.append(pants)
+    belt = loft_rings('belt', [ring(0.05, 0.155, 0.104, N, None, 3.2), ring(0.082, 0.157, 0.106, N, None, 3.2)])
+    belt.data.materials.append(dark)
+    bpy.ops.mesh.primitive_cube_add(size=1, location=B(0, 0.066, -0.108))
+    buckle = bpy.context.active_object; buckle.scale = (0.04, 0.03, 0.006); buckle.data.materials.append(metal)
+    select_only(ob, belt, buckle); bpy.ops.object.join()
+    ob = bpy.context.active_object; ob.name = 'pelvis'
+    bpy.ops.object.shade_smooth()
+    export(os.path.join(OUT, 'pelvis.glb'), [ob])
+
+def build_leg(name, L, r0, r1, bulge, detail_fn, extras=None):
+    """Limb along +Y (0..L). Game segment frame: local -X = front of the leg, +Z = outside (right leg)."""
+    reset()
+    N, R = 36, 56
+    rings = []
+    for i in range(R + 1):
+        t = i / R
+        r = r0 + (r1 - r0) * t + bulge * math.sin(math.pi * t ** 0.8)
+        end = min(t, 1 - t)
+        if end < 0.035: r *= math.sqrt(max(0.0, 1 - ((0.035 - end) / 0.035) ** 2)) * 0.4 + 0.6
+        rings.append(ring(t * L, r, r * 0.92, N, lambda a, t=t: detail_fn(t, a), 2.0))
+    ob = loft_rings(name, rings)
+    pants = mat('pants', (0.17, 0.18, 0.2), 0.9)
+    ob.data.materials.append(pants)
+    parts = [ob]
+    if extras: parts += extras(pants)
+    select_only(*parts); bpy.ops.object.join()
+    ob = bpy.context.active_object; ob.name = name
+    bpy.ops.object.shade_smooth()
+    export(os.path.join(OUT, f'{name}.glb'), [ob])
+
+def thigh_detail(t, a):
+    front = -math.cos(a)  # local -X
+    d = 0.003 * smoothstep(0.75, 0.95, t) * max(0, front) * math.sin(a * 5 + t * 30)   # knee wrinkles
+    d += 0.0018 * smoothstep(0.0, 0.25, t) * (1 - smoothstep(0.25, 0.4, t)) * math.sin(a * 4)  # hip drape
+    d += 0.0035 * math.exp(-((a - math.pi / 2) / 0.06) ** 2) * (0.2 < t < 0.9)            # outer seam
+    return d
+
+def thigh_pocket(pants):
+    # cargo pocket with flap on the outer side (+Z), mid thigh
+    bpy.ops.mesh.primitive_cube_add(size=1, location=B(0.0, 0.22, 0.082))
+    pk = bpy.context.active_object; pk.scale = (0.1, 0.022, 0.12)  # Blender axes: x, depth, up
+    bv = pk.modifiers.new('bv', 'BEVEL'); bv.width = 0.008; bv.segments = 3
+    apply_mods(pk)
+    bpy.ops.mesh.primitive_cube_add(size=1, location=B(0.0, 0.165, 0.094))
+    fl = bpy.context.active_object; fl.scale = (0.108, 0.012, 0.035)
+    bv = fl.modifiers.new('bv', 'BEVEL'); bv.width = 0.004; bv.segments = 2
+    apply_mods(fl)
+    for o in (pk, fl): o.data.materials.append(pants)
+    return [pk, fl]
+
+def shin_detail(t, a):
+    d = 0.0035 * smoothstep(0.55, 0.85, t) * (1 - smoothstep(0.86, 0.9, t)) * math.sin(2 * math.pi * (6 * t + 0.6 * a / (2 * math.pi)))
+    d += 0.0035 * math.exp(-((a - math.pi / 2) / 0.06) ** 2) * (t < 0.85)
+    if t > 0.9: d += 0.004 + 0.001 * math.sin(a * 30)  # ribbed ankle cuff
+    return d
+
+def build_head():
+    reset()
+    # skull + face built as one surface: deformed sphere + nose + ears, fused by remesh
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=64, ring_count=40, radius=0.1)
+    sk = bpy.context.active_object
+    for v in sk.data.vertices:
+        x, y, z = G(v.co)
+        nx, ny, nz = x / 0.1, y / 0.1, z / 0.1
+        front = max(0.0, -nz)
+        x *= 0.9; y *= 1.12
+        if y < 0:  # jaw narrows, chin forward
+            k = -y / 0.112
+            x *= 1 - 0.25 * k
+            z *= 1 - 0.1 * k
+            if z < 0: z -= 0.014 * k * front
+        # brow ridge, eye sockets, cheekbones
+        z -= 0.006 * front * math.exp(-((y - 0.03) / 0.012) ** 2) * (1 - abs(nx))
+        for sx in (-1, 1):
+            de = math.hypot((x - sx * 0.033) / 0.016, (y - 0.012) / 0.011)
+            if de < 1 and z < 0: z += 0.006 * (1 - de) ** 2
+            dc = math.hypot((x - sx * 0.05) / 0.025, (y + 0.02) / 0.02)
+            if dc < 1 and z < 0: z -= 0.004 * (1 - dc) ** 2
+        v.co = B(x, y, z)
+    bpy.ops.mesh.primitive_cone_add(radius1=0.016, radius2=0.004, depth=0.036, location=B(0, -0.008, -0.098))
+    nose = bpy.context.active_object; nose.rotation_euler = (math.radians(-100), 0, 0)
+    ears = []
+    for sx in (-1, 1):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.024, location=B(sx * 0.088, 0.0, 0.01))
+        e = bpy.context.active_object; e.scale = (0.35, 1.0, 0.7); ears.append(e)
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.046, depth=0.12, location=B(0, -0.15, 0.01))
+    neck = bpy.context.active_object  # cylinder axis is already vertical
+    select_only(sk, nose, neck, *ears); bpy.ops.object.join()
+    head = bpy.context.active_object
+    rm = head.modifiers.new('rm', 'REMESH'); rm.mode = 'VOXEL'; rm.voxel_size = 0.0018
+    sm = head.modifiers.new('sm', 'SMOOTH'); sm.factor = 0.5; sm.iterations = 6
+    dec = head.modifiers.new('dec', 'DECIMATE'); dec.ratio = 0.18
+    apply_mods(head)
+    skin, hair, dark, accent = mat('skin', (0.79, 0.56, 0.45), 0.5), mat('hair', (0.1, 0.08, 0.07), 0.55), mat('dark', (0.13, 0.135, 0.14), 0.75), mat('accent', (0.78, 0.09, 0.12), 0.55)
+    head.data.materials.append(skin)
+    # lips: a slightly darker band pressed onto the face
+    # hair cap with strand grooves swept back
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=96, ring_count=64, radius=0.106)
+    hc = bpy.context.active_object
+    bm = bmesh.new(); bm.from_mesh(hc.data)
+    kill = []
+    for v in bm.verts:
+        x, y, z = G(v.co)
+        # hairline: forehead at the front, above the ears at the sides, nape at the back
+        line = 0.04 if z < 0 else (-0.04 + 0.03 * (1 - abs(x) / 0.106))
+        if y < line - 0.03 * max(0, -z / 0.106) ** 2: kill.append(v)
+    bmesh.ops.delete(bm, geom=kill, context='VERTS')
+    for v in bm.verts:
+        x, y, z = G(v.co)
+        a = math.atan2(x, z)
+        r = 1 + 0.03 * math.sin(a * 46) * 0.25
+        v.co = B(x * 0.92 * r, y * 1.13 + 0.004, z * 1.02 * r)
+    bm.to_mesh(hc.data); bm.free()
+    smh = hc.modifiers.new('sm', 'SMOOTH'); smh.factor = 0.8; smh.iterations = 4  # soften the cut hairline
+    so = hc.modifiers.new('so', 'SOLIDIFY'); so.thickness = 0.004
+    apply_mods(hc)
+    hc.data.materials.append(hair)
+    eyes = []
+    for sx in (-1, 1):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.0085, location=B(sx * 0.033, 0.012, -0.085))
+        ey = bpy.context.active_object; ey.data.materials.append(dark); eyes.append(ey)
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.016, minor_radius=0.006, location=B(0, 0.04, 0.1))
+    tie = bpy.context.active_object; tie.rotation_euler = (0.6, 0, 0); tie.data.materials.append(accent)
+    select_only(head, hc, tie, *eyes); bpy.ops.object.join()
+    head = bpy.context.active_object; head.name = 'head'
+    bpy.ops.object.shade_smooth()
+    export(os.path.join(OUT, 'head.glb'), [head])
+
 if __name__ == '__main__':
     build_hand()
     sleeve('sleeve_upper', 0.29, 0.05, 0.042, 0.008, upper_folds)
     sleeve('sleeve_fore', 0.27 * 0.72, 0.043, 0.036, 0.004, fore_folds)
     build_shoe()
+    build_torso()
+    build_pelvis()
+    build_leg('thigh', 0.44, 0.088, 0.062, 0.01, thigh_detail, thigh_pocket)
+    build_leg('shin', 0.43, 0.06, 0.042, 0.012, shin_detail)
+    build_head()

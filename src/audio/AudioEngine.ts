@@ -296,6 +296,7 @@ export class AudioEngine {
         case 'bump': this.play('land', 0.4, 1.5, 0.2); this.play('exhale', 0.4, 0.9, 0); break;
         case 'death': this.play('death', 0.9, 1, 0.5); break;
         case 'quickturn': this.play('cloth', 0.2, 1.2, 0); break;
+        case 'mantleJump': this.play('whoosh', 0.3, 1.35, 0.1); this.play('exhale', 0.35, 1.05, 0); break;
       }
     }
   }

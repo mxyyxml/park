@@ -19,8 +19,9 @@ Click to capture the mouse. Esc pauses. The game also supports a gamepad (standa
 2. Click the game view so it captures the mouse. Press **Esc** to pause.
 3. Hold **Shift + W** to sprint and build speed. Press **Space** at a roof edge to jump the gap.
 4. **Space** is "up": it jumps, runs along a wall if you jump at it from the side, climbs a wall you run straight at, grabs and pulls up ledges, and vaults low obstacles.
-5. **Ctrl** (or **C**) is "down": slide under things at speed, and press it just before a big landing to **roll** and keep your speed.
-6. In time trials, follow the red beam and the marker to each checkpoint. Your best run becomes a red **ghost** to race next time. **R** restarts instantly.
+5. **Mantle jump:** press **Space** again while you're climbing over a ledge or vaulting an obstacle to launch off the top with extra speed.
+6. **Ctrl** (or **C**) is "down": slide under things at speed, and press it just before a big landing to **roll** and keep your speed.
+7. In time trials, follow the red beam and the marker to each checkpoint. Your best run becomes a red **ghost** to race next time. **R** restarts instantly.
 
 Tips: hit walls at a shallow angle to wall-run; red objects (pipes, ladders, beams, crates) are climbable routes; hold W while falling toward a ledge to grab it; on balance beams, steer with A/D to stay upright.
 
@@ -116,6 +117,7 @@ Sculpted character assets are built in Blender from `tools/blender/sculpt_assets
 
 - **hand**: skin-modifier fingers fused with a sculpted palm (voxel remesh + smoothing), knuckle bumps, joint creases, tendons and nails; fingerless glove pieces shrink-wrapped onto the surface; 16-bone rig (wrist, 3 per finger, 3 thumb) with distance-based skin weights. The game drives the finger bones from the grip system.
 - **sleeves**: tapered tubes with fabric folds bunched at the elbow and wrist and a ribbed cuff.
+- **body**: hooded jacket torso (zipper, chest and shoulder-blade planes, ribbed hem), belted pelvis, cargo-pocket thighs with knee wrinkles, shins with a ribbed ankle cuff, and a head (remeshed face, hair with grooves and tie) that also casts your shadow in first person.
 - **shoe**: lofted upper with toe spring, heel collar, midsole, red outsole with cut tread, laces and eyelets.
 
 Photoscanned assets are from [Poly Haven](https://polyhaven.com) (CC0), fetched by `tools/fetch_assets.py`: textures concrete_wall_001/006/008, bicolour_gravel and asphalt_02, and the exterior_aircon_unit model (two per rooftop AC plinth). If any asset fails to load, the game falls back to its procedural version.
@@ -141,4 +143,4 @@ Photoscanned assets are from [Poly Haven](https://polyhaven.com) (CC0), fetched 
 
 ## Scope notes
 
-The character's hands, sleeves and shoes are Blender-sculpted by script, not by an artist's hand; the head, torso and legs are still procedural meshes. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.
+The character is Blender-sculpted by script, not by an artist's hand. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.

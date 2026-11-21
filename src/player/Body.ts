@@ -30,6 +30,23 @@ export interface BodyDriver {
 }
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+
+/**
+ * Shadow-only parts of the first-person body: the mesh draws nothing for the camera (draw range
+ * collapsed just before its camera draw) but still renders into the sun's shadow maps.
+ */
+function setSeen(o: THREE.Object3D, seen: boolean) {
+  o.traverse((c) => {
+    const m = c as THREE.Mesh;
+    if (!m.isMesh) return;
+    if (!m.userData.shadowHooks) {
+      m.userData.shadowHooks = true;
+      m.onBeforeRender = (_r, _s, _c, geo) => geo.setDrawRange(0, m.userData.hidden ? 0 : Infinity);
+      m.onBeforeShadow = (_r, _o, _c, _sc, geo) => geo.setDrawRange(0, Infinity);
+    }
+    m.userData.hidden = !seen;
+  });
+}
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 const smooth = (t: number) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 
@@ -297,8 +314,8 @@ export class RunnerBody {
   armRoot = new THREE.Group();   // arms: positioned in world each frame
   arms: Arm[] = [];
   legs: Leg[] = [];
-  torso: THREE.Mesh;
-  hips: THREE.Mesh;
+  torso: THREE.Object3D;
+  hips: THREE.Object3D;
   head: THREE.Group | null = null;
   firstPerson: boolean;
   private bodyYaw = 0;
@@ -315,7 +332,8 @@ export class RunnerBody {
   constructor(m: BodyMaterials, firstPerson: boolean, assets: CharacterAssets | null = null) {
     this.firstPerson = firstPerson;
     const matMap: Record<string, THREE.Material> = { skin: m.skin, glove: m.glove, pad: m.pad, nail: m.nail, accent: m.accent,
-      jacket: m.jacket, shoe_white: m.shoeWhite, shoe_mid: m.shoeWhite, shoe_red: m.accent, shoe_dark: m.dark };
+      jacket: m.jacket, shoe_white: m.shoeWhite, shoe_mid: m.shoeWhite, shoe_red: m.accent, shoe_dark: m.dark,
+      pants: m.pants, hair: m.hair, dark: m.dark, metal: m.dark };
     for (const side of [-1, 1]) {
       const upper = new THREE.Mesh(assets ? assets.sleeveUpper : limbGeo(RunnerBody.UPPER, 0.05, 0.042, 0.008, 0.9), m.jacket);
       const fore = new THREE.Mesh(assets ? assets.sleeveFore : limbGeo(RunnerBody.FORE * 0.72, 0.043, 0.036, 0.004, 0.9), m.jacket);
@@ -347,8 +365,9 @@ export class RunnerBody {
       this.arms.push({ upper, fore, cuff, wrist, hand, elbow, shoulderCap, pos: V(), vel: V(), side });
     }
     for (const side of [-1, 1]) {
-      const thigh = new THREE.Mesh(limbGeo(RunnerBody.THIGH, 0.088, 0.062, 0.01, 0.92), m.pants);
-      const shin = new THREE.Mesh(limbGeo(RunnerBody.SHIN, 0.06, 0.042, 0.012, 0.92), m.pants);
+      const thigh = new THREE.Mesh(assets ? assets.thigh : limbGeo(RunnerBody.THIGH, 0.088, 0.062, 0.01, 0.92), m.pants);
+      const shin = new THREE.Mesh(assets ? assets.shin : limbGeo(RunnerBody.SHIN, 0.06, 0.042, 0.012, 0.92), m.pants);
+      if (side < 0) thigh.scale.z = -1; // cargo pocket on the outside of each leg
       const knee = new THREE.Mesh(new THREE.SphereGeometry(0.062, 12, 8), m.pants);
       let shoe: THREE.Group;
       if (assets) { shoe = new THREE.Group(); const s2 = instantiate(assets.shoe, matMap); if (side < 0) s2.scale.x = -1; shoe.add(s2); }
@@ -362,16 +381,17 @@ export class RunnerBody {
       .map(([r, y]) => new THREE.Vector2(r, y));
     const tg = new THREE.LatheGeometry(prof, 18);
     tg.scale(1, 1, 0.62);
-    this.torso = new THREE.Mesh(tg, m.jacket);
+    this.torso = assets ? new THREE.Group().add(instantiate(assets.torso, matMap)) : new THREE.Mesh(tg, m.jacket);
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.5, 0.012), m.accent);
     stripe.position.set(0.03, 0.26, 0.112);
     const zip = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.48, 0.006), m.dark);
     zip.position.set(0, 0.26, 0.114);
-    this.torso.add(stripe, zip);
-    this.hips = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.16, 0.2, 3, 0.06), m.pants);
+    if (!assets) this.torso.add(stripe, zip);
+    this.hips = assets ? new THREE.Group().add(instantiate(assets.pelvis, matMap)) : new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.16, 0.2, 3, 0.06), m.pants);
     this.torso.castShadow = true; this.hips.castShadow = true;
     this.root.add(this.torso, this.hips);
-    if (!firstPerson) {
+    {
+      // the head exists in first person too, as a shadow-only part (see SHADOW_LAYER)
       this.head = new THREE.Group();
       // skull with a narrower jaw and forward chin (head local: -Z forward)
       const sg = new THREE.SphereGeometry(0.1, 28, 20);
@@ -395,7 +415,7 @@ export class RunnerBody {
         eye.position.set(sx * 0.032, 0.012, -0.088);
         const brow = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.006, 0.008, 1, 0.002), m.hair);
         brow.position.set(sx * 0.033, 0.03, -0.092); brow.rotation.z = sx * -0.12;
-        head.add(ear, eye, brow);
+        if (!assets) head.add(ear, eye, brow);
       }
       const lips = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.006, 0.008, 1, 0.003), m.accent);
       (lips.material as THREE.Material) = m.skin;
@@ -406,7 +426,8 @@ export class RunnerBody {
       collar.rotation.x = Math.PI / 2; collar.position.y = -0.155;
       const tie = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.007, 8, 14), m.accent);
       tie.position.set(0, 0.04, 0.1); tie.rotation.x = 0.6;
-      head.add(skull, hairCap, nose, lips, neck, collar, tie);
+      if (assets) head.add(instantiate(assets.head, matMap));
+      else head.add(skull, hairCap, nose, lips, neck, collar, tie);
       // ponytail: a short verlet chain hanging from the tie, swung by the body's motion
       for (let i = 0; i < 6; i++) {
         const r0 = 0.024 * (1 - i * 0.12), r1 = 0.024 * (1 - (i + 1) * 0.12);
@@ -420,7 +441,11 @@ export class RunnerBody {
       head.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
       this.root.add(this.head);
     }
+    this.installViewHooks();
   }
+
+  /** every body mesh restores its own draw range (geometry can be shared with other bodies) */
+  private installViewHooks() { setSeen(this.root, true); setSeen(this.armRoot, true); }
 
   setVisible(v: boolean) { this.visible = v; this.root.visible = v; this.armRoot.visible = v; }
 
@@ -457,15 +482,28 @@ export class RunnerBody {
     this.hips.position.copy(pelvis);
     this.hips.rotation.set(0, this.bodyYaw, 0);
     this.torso.position.copy(pelvis).addScaledVector(up, 0.03);
-    this.torso.rotation.set(-lean, this.bodyYaw + Math.PI, 0, 'YXZ');
-    this.torso.rotation.set(lean, this.bodyYaw, 0, 'YXZ');
+    this.torso.rotation.set(-lean, this.bodyYaw, 0, 'YXZ');
     if (this.head) {
       this.head.position.copy(eyePos).addScaledVector(fwd, -0.06).addScaledVector(up, 0.02);
       this.head.rotation.set(d.pitch * 0.5, d.yaw, 0, 'YXZ');
       this.updateTail(dt);
     }
     // in first person: hide the torso when it would intersect the near plane (looking down steeply)
-    if (this.firstPerson) this.torso.visible = d.pitch > -1.25 || st !== PState.Ground;
+    if (this.firstPerson) {
+      // first person: what the camera may see vs. what only casts a shadow. The camera sits inside the
+      // head, and during slides/rolls inside the torso and legs, so those switch to shadow-only.
+      const lowCam = st === PState.Slide || st === PState.Roll || (st === PState.Traverse && d.tKind === 'pullup');
+      const torsoSeen = !lowCam && d.pitch > -1.25;
+      const legsSeen = st !== PState.Roll;
+      const key = (torsoSeen ? 1 : 0) | (legsSeen ? 2 : 0);
+      if (key !== this.fpViewKey) {
+        this.fpViewKey = key;
+        for (const o of [this.torso, this.hips]) setSeen(o, torsoSeen);
+        for (const L of this.legs) for (const o of [L.thigh, L.shin, L.knee, L.shoe]) setSeen(o, legsSeen);
+        if (this.head) setSeen(this.head, false);
+        for (const t of this.tailMeshes) setSeen(t, false);
+      }
+    }
 
     // ---- legs
     this.updateLegs(dt, d, pelvis, feet, fwd, right, up, speed, sn);
@@ -595,6 +633,7 @@ export class RunnerBody {
     }
   }
   private lastPelvis = V();
+  private fpViewKey = -1;
   private tailPts: THREE.Vector3[] = [];
   private tailPrev: THREE.Vector3[] = [];
   private tailMeshes: THREE.Mesh[] = [];

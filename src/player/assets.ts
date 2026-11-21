@@ -8,6 +8,11 @@ export interface CharacterAssets {
   sleeveUpper: THREE.BufferGeometry;
   sleeveFore: THREE.BufferGeometry;
   shoe: THREE.Object3D;
+  torso: THREE.Object3D;
+  pelvis: THREE.Object3D;
+  thigh: THREE.BufferGeometry;
+  shin: THREE.BufferGeometry;
+  head: THREE.Object3D;
 }
 
 function firstGeometry(o: THREE.Object3D) {
@@ -21,8 +26,9 @@ function firstGeometry(o: THREE.Object3D) {
 export async function loadCharacterAssets(base = './assets/models/'): Promise<CharacterAssets | null> {
   try {
     const loader = new GLTFLoader();
-    const [hand, su, sf, shoe] = await Promise.all(['hand', 'sleeve_upper', 'sleeve_fore', 'shoe'].map((n) => loader.loadAsync(`${base}${n}.json`)));
-    return { hand: hand.scene, sleeveUpper: firstGeometry(su.scene), sleeveFore: firstGeometry(sf.scene), shoe: shoe.scene };
+    const names = ['hand', 'sleeve_upper', 'sleeve_fore', 'shoe', 'torso', 'pelvis', 'thigh', 'shin', 'head'];
+    const [hand, su, sf, shoe, torso, pelvis, thigh, shin, head] = (await Promise.all(names.map((n) => loader.loadAsync(`${base}${n}.json`)))).map((g) => g.scene);
+    return { hand, sleeveUpper: firstGeometry(su), sleeveFore: firstGeometry(sf), shoe, torso, pelvis, thigh: firstGeometry(thigh), shin: firstGeometry(shin), head };
   } catch (e) {
     console.warn('character assets unavailable, using procedural body', e);
     return null;
