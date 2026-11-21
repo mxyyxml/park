@@ -97,3 +97,13 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
   .menu { background: rgba(8,9,10,.78); }
   .menu .panel { margin: auto; }
 }
+
+/* ---------- touch controls ---------- */
+#touch { position: absolute; inset: 0; pointer-events: all; touch-action: none; }
+#touch .stick { position: absolute; left: 0; top: 0; width: 120px; height: 120px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); background: rgba(0,0,0,.15); opacity: 0; transition: opacity .15s; pointer-events: none; }
+#touch .stick i { position: absolute; left: 38px; top: 38px; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.8); }
+#touch .tbtn { position: absolute; border: 2px solid rgba(255,255,255,.5); background: rgba(10,10,12,.35); color: var(--white); font: 800 14px var(--font); letter-spacing: .14em; border-radius: 50%; touch-action: none; }
+#touch .tbtn:active { background: var(--red); border-color: var(--red); }
+#touch .up { right: calc(28px + env(safe-area-inset-right, 0px)); bottom: calc(110px + env(safe-area-inset-bottom, 0px)); width: 92px; height: 92px; }
+#touch .down { right: calc(130px + env(safe-area-inset-right, 0px)); bottom: calc(40px + env(safe-area-inset-bottom, 0px)); width: 76px; height: 76px; }
+#touch .pause { right: calc(18px + env(safe-area-inset-right, 0px)); top: calc(70px + env(safe-area-inset-top, 0px)); width: 44px; height: 44px; font-size: 12px; }

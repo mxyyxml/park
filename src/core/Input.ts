@@ -25,6 +25,9 @@ export class Input {
   invertY = false;
   gamepadSens = 3.2;
   locked = false;
+  /** set when the browser refuses pointer lock: look follows the free mouse instead */
+  fallbackLook = false;
+  get active() { return this.locked || this.fallbackLook; }
   mouseButtons = 0;
   private gpPrev: boolean[] = [];
   autoSprint = false;
@@ -43,8 +46,9 @@ export class Input {
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
     document.addEventListener('pointerlockchange', () => { this.locked = document.pointerLockElement === this.el; });
+    document.addEventListener('pointerlockerror', () => { this.fallbackLook = true; });
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked || !this.enabled) return;
+      if (!this.active || !this.enabled) return;
       this.lookDX += e.movementX; this.lookDY += e.movementY;
     });
     el.addEventListener('mousedown', (e) => {
@@ -56,7 +60,62 @@ export class Input {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  lock() { if (!this.locked) this.el.requestPointerLock?.()?.catch?.(() => {}); }
+  // ---- touch: left stick, right-half look, UP / DOWN buttons
+  touch = { active: false, mx: 0, my: 0, lookDX: 0, lookDY: 0, up: false, down: false, upPressed: false, downPressed: false };
+  private stickId: number | null = null; private lookId: number | null = null;
+  private stickOrigin = { x: 0, y: 0 }; private lookLast = { x: 0, y: 0 };
+  touchSensitivity = 0.006;
+  onTouchStick: ((x: number, y: number, ox: number, oy: number, on: boolean) => void) | null = null;
+
+  enableTouch(root: HTMLElement, up: HTMLElement, down: HTMLElement) {
+    this.touch.active = true;
+    const btn = (el: HTMLElement, key: 'up' | 'down') => {
+      el.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); this.touch[key] = true; this.touch[key === 'up' ? 'upPressed' : 'downPressed'] = true; }, { passive: false });
+      const end = (e: Event) => { e.preventDefault(); this.touch[key] = false; };
+      el.addEventListener('touchend', end, { passive: false }); el.addEventListener('touchcancel', end, { passive: false });
+    };
+    btn(up, 'up'); btn(down, 'down');
+    root.addEventListener('touchstart', (e) => {
+      for (const t of Array.from(e.changedTouches)) {
+        if (t.clientX < window.innerWidth * 0.45 && this.stickId === null) {
+          this.stickId = t.identifier; this.stickOrigin = { x: t.clientX, y: t.clientY };
+          this.onTouchStick?.(t.clientX, t.clientY, t.clientX, t.clientY, true);
+        } else if (this.lookId === null) { this.lookId = t.identifier; this.lookLast = { x: t.clientX, y: t.clientY }; }
+      }
+      e.preventDefault();
+    }, { passive: false });
+    root.addEventListener('touchmove', (e) => {
+      for (const t of Array.from(e.changedTouches)) {
+        if (t.identifier === this.stickId) {
+          const R = 60;
+          let dx = (t.clientX - this.stickOrigin.x) / R, dy = (t.clientY - this.stickOrigin.y) / R;
+          const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; }
+          this.touch.mx = dx; this.touch.my = -dy;
+          this.onTouchStick?.(this.stickOrigin.x + dx * R, this.stickOrigin.y + dy * R, this.stickOrigin.x, this.stickOrigin.y, true);
+        } else if (t.identifier === this.lookId) {
+          this.touch.lookDX += t.clientX - this.lookLast.x; this.touch.lookDY += t.clientY - this.lookLast.y;
+          this.lookLast = { x: t.clientX, y: t.clientY };
+        }
+      }
+      e.preventDefault();
+    }, { passive: false });
+    const end = (e: TouchEvent) => {
+      for (const t of Array.from(e.changedTouches)) {
+        if (t.identifier === this.stickId) { this.stickId = null; this.touch.mx = this.touch.my = 0; this.onTouchStick?.(0, 0, 0, 0, false); }
+        if (t.identifier === this.lookId) this.lookId = null;
+      }
+    };
+    root.addEventListener('touchend', end); root.addEventListener('touchcancel', end);
+  }
+
+  lock() {
+    if (this.locked || this.fallbackLook) return;
+    if (!this.el.requestPointerLock) { this.fallbackLook = true; return; }
+    try {
+      const r = this.el.requestPointerLock() as unknown as Promise<void> | undefined;
+      r?.catch?.(() => { this.fallbackLook = true; });
+    } catch { this.fallbackLook = true; }
+  }
   unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
 
   private any(codes: string[]) { return codes.some((c) => this.keys.has(c)); }
@@ -84,6 +143,14 @@ export class Input {
     f.lookX = this.lookDX * this.sensitivity;
     f.lookY = -this.lookDY * this.sensitivity * (this.invertY ? -1 : 1);
     this.lookDX = 0; this.lookDY = 0;
+    if (this.touch.active) {
+      const tc = this.touch;
+      if (Math.abs(tc.mx) + Math.abs(tc.my) > 0.05) { f.moveX = tc.mx; f.moveY = tc.my; f.sprint ||= Math.hypot(tc.mx, tc.my) > 0.85 && tc.my > 0.5; }
+      f.lookX += tc.lookDX * this.touchSensitivity; f.lookY += -tc.lookDY * this.touchSensitivity * (this.invertY ? -1 : 1);
+      tc.lookDX = tc.lookDY = 0;
+      f.jump ||= tc.up; f.jumpPressed ||= tc.upPressed; f.crouch ||= tc.down; f.crouchPressed ||= tc.downPressed;
+      tc.upPressed = tc.downPressed = false;
+    }
     const gp = this.gamepad();
     if (gp) {
       const dz = (v: number) => (Math.abs(v) < 0.15 ? 0 : (v - Math.sign(v) * 0.15) / 0.85);

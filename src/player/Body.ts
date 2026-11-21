@@ -28,7 +28,7 @@ export interface BodyDriver {
   balance: number;
 }
 
-const V = () => new THREE.Vector3();
+const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 const smooth = (t: number) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 
@@ -81,57 +81,113 @@ function ik(S: THREE.Vector3, T: THREE.Vector3, a: number, b: number, pole: THRE
 }
 
 // ---- hand ----------------------------------------------------------------------------------
+/** Sculpted palm: tapered toward the wrist, arched back, padded heel and thenar. */
+function palmGeo(side: number): THREE.BufferGeometry {
+  const g = new RoundedBoxGeometry(0.08, 0.09, 0.028, 5, 0.012);
+  const pos = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const t = (y + 0.045) / 0.09; // 0 wrist .. 1 knuckles
+    x *= 0.84 + 0.16 * t;
+    const across = x / 0.042;
+    if (z > 0) z += 0.0035 * (1 - across * across) * (0.4 + 0.6 * t); // arched back of hand
+    else {
+      const thenar = Math.max(0, -across * side) * Math.sin(Math.PI * Math.min(1, t * 1.4));
+      z -= 0.005 * thenar + 0.0025 * Math.sin(Math.PI * t); // fleshy palm
+    }
+    y -= 0.007 * Math.max(0, across * side) * t; // knuckle line slopes toward the little finger
+    pos.setXYZ(i, x, y, z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
 class Hand {
   group = new THREE.Group();
   fingers: THREE.Group[][] = [];
   thumb: THREE.Group[] = [];
   curl = 0.4;
-  constructor(public side: number, skin: THREE.Material, glove: THREE.Material, accent: THREE.Material) {
-    // local frame: +Y fingers, +Z back of hand, palm faces -Z
-    const palm = new THREE.Mesh(new RoundedBoxGeometry(0.086, 0.095, 0.032, 3, 0.012), glove);
-    palm.position.set(0, 0.045, 0);
-    this.group.add(palm);
-    const strap = new THREE.Mesh(new RoundedBoxGeometry(0.09, 0.02, 0.036, 2, 0.008), accent);
-    strap.position.set(0, 0.01, 0.0);
-    this.group.add(strap);
-    const lens = [[0.042, 0.026, 0.02], [0.046, 0.029, 0.021], [0.044, 0.027, 0.02], [0.034, 0.022, 0.018]];
+  constructor(public side: number, skin: THREE.Material, glove: THREE.Material, accent: THREE.Material, nail: THREE.Material, pad: THREE.Material) {
+    // local frame: +Y fingers, +Z back of hand, palm faces -Z; thumb on the -side*X side
+    // fingerless glove: bare back of hand and fingers; the glove is a palm grip, knuckle guard and wrist strap
+    const palm = new THREE.Mesh(palmGeo(side), skin);
+    palm.position.set(0, 0.046, 0);
+    const shell = new THREE.Mesh(palmGeo(side), glove);
+    shell.scale.set(1.04, 0.9, 1.12); shell.position.set(0, 0.042, -0.0035);
+    const guard = new THREE.Mesh(new RoundedBoxGeometry(0.07, 0.016, 0.008, 3, 0.004), pad);
+    guard.position.set(0, 0.083, 0.016);
+    const grip = new THREE.Mesh(new RoundedBoxGeometry(0.058, 0.05, 0.006, 3, 0.003), pad);
+    grip.position.set(0, 0.04, -0.02);
+    // glove back panel only over the lower half of the back of the hand
+    const backPanel = new THREE.Mesh(new RoundedBoxGeometry(0.07, 0.03, 0.006, 3, 0.003), glove);
+    backPanel.position.set(0, 0.026, 0.016);
+    this.group.add(shell, backPanel);
+    void palm;
+    const strap = new THREE.Mesh(new RoundedBoxGeometry(0.078, 0.018, 0.034, 3, 0.008), glove);
+    strap.position.set(0, 0.006, 0);
+    const tab = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.016, 0.006, 2, 0.002), accent);
+    tab.position.set(0.012 * side, 0.006, 0.019);
+    this.group.add(palm, guard, grip, strap, tab);
+    // fingers: index, middle, ring, little
+    const lens = [[0.041, 0.025, 0.02], [0.045, 0.028, 0.021], [0.043, 0.027, 0.02], [0.033, 0.02, 0.018]];
+    const rad = [0.0093, 0.0096, 0.009, 0.0079];
     for (let f = 0; f < 4; f++) {
       const chain: THREE.Group[] = [];
       let parent: THREE.Object3D = this.group;
-      const x = (-0.031 + f * 0.0207) * side;
-      const r = 0.0095 - f * 0.0006;
+      const x = (-0.029 + f * 0.0193) * side;
+      const r = rad[f];
       for (let k = 0; k < 3; k++) {
         const j = new THREE.Group();
-        j.position.set(k === 0 ? x : 0, k === 0 ? 0.093 - Math.abs(f - 1.3) * 0.004 : lens[f][k - 1], 0);
-        const m = new THREE.Mesh(limbGeo(lens[f][k], r * (1 - k * 0.08), r * (0.92 - k * 0.1), 0, 0.85, 8), k === 0 ? glove : skin);
-        j.add(m);
+        j.position.set(k === 0 ? x : 0, k === 0 ? 0.091 - Math.max(0, f - 1) * 0.005 - (f === 0 ? 0.002 : 0) : lens[f][k - 1], 0);
+        const r0 = r * (1 - k * 0.09), r1 = r * (0.9 - k * 0.1);
+        const seg = new THREE.Mesh(limbGeo(lens[f][k], r0, r1, 0.0006, 0.82, 10), skin);
+        const joint = new THREE.Mesh(new THREE.SphereGeometry(r0 * 1.02, 10, 8), skin);
+        joint.scale.set(1, 1, 0.84);
+        j.add(seg, joint);
+        if (k === 2) {
+          const n = new THREE.Mesh(new RoundedBoxGeometry(r1 * 1.4, lens[f][k] * 0.55, 0.002, 2, 0.0009), nail);
+          n.position.set(0, lens[f][k] * 0.58, r1 * 0.78);
+          j.add(n);
+        }
         parent.add(j);
         chain.push(j);
         parent = j;
       }
       this.fingers.push(chain);
     }
-    // thumb
+    // thumb: metacarpal (gloved), proximal, distal with nail
     let parent: THREE.Object3D = this.group;
-    for (let k = 0; k < 2; k++) {
+    const tl = [0.034, 0.03, 0.026];
+    for (let k = 0; k < 3; k++) {
       const j = new THREE.Group();
-      if (k === 0) { j.position.set(0.04 * side * -1 * -1 * (side > 0 ? -1 : 1) * -1, 0.03, -0.012); j.rotation.set(-0.5, 0, 0.9 * -side); }
-      else j.position.set(0, 0.036, 0);
-      const m = new THREE.Mesh(limbGeo(0.036 - k * 0.006, 0.0115, 0.0095, 0, 0.9, 8), k === 0 ? glove : skin);
-      j.add(m); parent.add(j); this.thumb.push(j); parent = j;
+      if (k === 0) { j.position.set(-0.03 * side, 0.016, -0.008); j.rotation.set(-0.35, 0, 0.75 * side); }
+      else j.position.set(0, tl[k - 1], 0);
+      const r0 = 0.0118 - k * 0.0011;
+      const seg = new THREE.Mesh(limbGeo(tl[k], r0, r0 * 0.88, 0.001, 0.85, 10), k < 1 ? glove : skin);
+      const joint = new THREE.Mesh(new THREE.SphereGeometry(r0, 10, 8), k < 1 ? glove : skin);
+      j.add(seg, joint);
+      if (k === 2) {
+        const n = new THREE.Mesh(new RoundedBoxGeometry(r0 * 1.3, tl[k] * 0.5, 0.002, 2, 0.0009), nail);
+        n.position.set(0, tl[k] * 0.6, r0 * 0.75);
+        j.add(n);
+      }
+      parent.add(j); this.thumb.push(j); parent = j;
     }
-    this.thumb[0].position.x = 0.043 * -side;
     this.group.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   }
   setCurl(c: number) {
     this.curl = c;
     for (let f = 0; f < 4; f++) {
       const ch = this.fingers[f];
-      const cc = c * (0.9 + f * 0.05);
-      ch[0].rotation.x = -cc * 1.25; ch[1].rotation.x = -cc * 1.5; ch[2].rotation.x = -cc * 1.1;
-      ch[0].rotation.z = (f - 1.5) * 0.06 * this.side * (1 - c);
+      const cc = c * (0.88 + f * 0.06);
+      ch[0].rotation.x = -cc * 1.3; ch[1].rotation.x = -cc * 1.55; ch[2].rotation.x = -cc * 1.05;
+      ch[0].rotation.z = (f - 1.5) * 0.07 * this.side * (1 - c);
     }
-    this.thumb[1].rotation.x = -c * 0.9;
+    // thumb closes across the palm as the grip tightens
+    this.thumb[0].rotation.z = (0.75 - c * 0.35) * this.side;
+    this.thumb[0].rotation.x = -0.35 - c * 0.45;
+    this.thumb[1].rotation.x = -c * 0.6;
+    this.thumb[2].rotation.x = -c * 0.75;
   }
 }
 
@@ -166,12 +222,12 @@ interface Arm { upper: THREE.Mesh; fore: THREE.Mesh; cuff: THREE.Mesh; wrist: TH
   pos: THREE.Vector3; vel: THREE.Vector3; side: number }
 interface Leg { thigh: THREE.Mesh; shin: THREE.Mesh; knee: THREE.Mesh; shoe: THREE.Group; side: number }
 
-export interface BodyMaterials { skin: THREE.Material; glove: THREE.Material; jacket: THREE.Material; accent: THREE.Material; pants: THREE.Material; shoeWhite: THREE.Material; dark: THREE.Material }
+export interface BodyMaterials { skin: THREE.Material; glove: THREE.Material; jacket: THREE.Material; accent: THREE.Material; pants: THREE.Material; shoeWhite: THREE.Material; dark: THREE.Material; nail: THREE.Material; pad: THREE.Material; hair: THREE.Material }
 
 export function makeBodyMaterials(fabric: TexSet | null, ghost = false): BodyMaterials {
   if (ghost) {
     const m = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff1a1a, emissiveIntensity: 0.6, transparent: true, opacity: 0.4, depthWrite: false, roughness: 0.4 });
-    return { skin: m, glove: m, jacket: m, accent: m, pants: m, shoeWhite: m, dark: m };
+    return { skin: m, glove: m, jacket: m, accent: m, pants: m, shoeWhite: m, dark: m, nail: m, pad: m, hair: m };
   }
   const fab = (color: number, rough = 0.85) => {
     const p: THREE.MeshStandardMaterialParameters = { color, roughness: rough };
@@ -181,7 +237,10 @@ export function makeBodyMaterials(fabric: TexSet | null, ghost = false): BodyMat
     return mm;
   };
   return {
-    skin: withFog(new THREE.MeshStandardMaterial({ color: 0xc98f72, roughness: 0.55 })),
+    skin: withFog(new THREE.MeshPhysicalMaterial({ color: 0xc98f72, roughness: 0.5, sheen: 0.6, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xff8a6a), clearcoat: 0.05 })),
+    nail: withFog(new THREE.MeshStandardMaterial({ color: 0xe8b4a4, roughness: 0.25 })),
+    pad: withFog(new THREE.MeshStandardMaterial({ color: 0x3a3c41, roughness: 0.9 })),
+    hair: withFog(new THREE.MeshStandardMaterial({ color: 0x1b1512, roughness: 0.55, metalness: 0.05 })),
     glove: withFog(new THREE.MeshStandardMaterial({ color: 0x1c1d20, roughness: 0.7 })),
     jacket: fab(0xe9e9e6),
     accent: withFog(new THREE.MeshStandardMaterial({ color: 0xc8161e, roughness: 0.55 })),
@@ -219,7 +278,23 @@ export class RunnerBody {
       const cuff = new THREE.Mesh(limbGeo(0.03, 0.039, 0.037, 0, 0.9), m.accent);
       const wrist = new THREE.Mesh(limbGeo(RunnerBody.FORE * 0.26, 0.031, 0.027, 0.002, 0.8), m.skin);
       const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.044, 12, 8), m.jacket);
-      const hand = new Hand(side, m.skin, m.glove, m.accent);
+      const hand = new Hand(side, m.skin, m.glove, m.accent, m.nail, m.pad);
+      // seam stripe down the outside of the sleeve, watch on the left wrist
+      for (const [limb, len, r] of [[upper, RunnerBody.UPPER, 0.049], [fore, RunnerBody.FORE * 0.72, 0.042]] as [THREE.Mesh, number, number][]) {
+        const st = new THREE.Mesh(new THREE.BoxGeometry(0.008, len * 0.92, 0.004), m.accent);
+        st.position.set(0, len * 0.5, r * 0.9 * side);
+        limb.add(st);
+      }
+      if (side < 0) {
+        const band = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.006, 8, 20), m.dark);
+        band.rotation.x = Math.PI / 2; band.position.y = 0.035; band.scale.set(1, 0.85, 1);
+        const face = new THREE.Mesh(new RoundedBoxGeometry(0.028, 0.03, 0.008, 2, 0.003), m.dark);
+        face.position.set(0, 0.035, 0.032);
+        const screenM = new THREE.MeshStandardMaterial({ color: 0x101418, emissive: 0xd8202a, emissiveIntensity: 0.6, roughness: 0.2 });
+        const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.02, 0.022), screenM);
+        scr.position.set(0, 0.035, 0.0365);
+        wrist.add(band, face, scr);
+      }
       const shoulderCap = new THREE.Mesh(new THREE.SphereGeometry(0.068, 14, 10), m.jacket);
       shoulderCap.scale.set(1, 0.85, 1);
       shoulderCap.visible = !firstPerson;
@@ -252,17 +327,51 @@ export class RunnerBody {
     this.root.add(this.torso, this.hips);
     if (!firstPerson) {
       this.head = new THREE.Group();
-      const skull = new THREE.Mesh(new THREE.SphereGeometry(0.105, 16, 12), m.skin);
-      skull.scale.set(0.95, 1.1, 1.05);
-      const hair = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), m.dark);
-      hair.position.y = 0.02;
-      const neck = new THREE.Mesh(limbGeo(0.07, 0.048, 0.045), m.skin);
-      neck.position.y = -0.155;
-      const collar = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.025, 8, 16), m.jacket);
-      collar.rotation.x = Math.PI / 2; collar.position.y = -0.15;
-      const nose = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), m.skin);
-      nose.position.set(0, -0.01, -0.105);
-      this.head.add(skull, hair, neck, collar, nose);
+      // skull with a narrower jaw and forward chin (head local: -Z forward)
+      const sg = new THREE.SphereGeometry(0.1, 28, 20);
+      const sp = sg.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < sp.count; i++) {
+        let x = sp.getX(i), y = sp.getY(i), z = sp.getZ(i);
+        if (y < 0) { const k = -y / 0.1; x *= 1 - 0.22 * k; z *= 1 - 0.08 * k; if (z < 0) z -= 0.012 * k; }
+        sp.setXYZ(i, x * 0.92, y * 1.12, z);
+      }
+      sg.computeVertexNormals();
+      const skull = new THREE.Mesh(sg, m.skin);
+      const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.104, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.52), m.hair);
+      hairCap.scale.set(0.95, 1.12, 1.03); hairCap.position.set(0, 0.012, 0.006); hairCap.rotation.x = -0.18;
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.034, 8), m.skin);
+      nose.rotation.x = -Math.PI / 2 + 0.25; nose.position.set(0, -0.012, -0.1);
+      const head = this.head;
+      for (const sx of [-1, 1]) {
+        const ear = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), m.skin);
+        ear.scale.set(0.45, 1, 0.75); ear.position.set(sx * 0.091, 0.0, 0.01);
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.009, 8, 6), m.dark);
+        eye.position.set(sx * 0.032, 0.012, -0.088);
+        const brow = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.006, 0.008, 1, 0.002), m.hair);
+        brow.position.set(sx * 0.033, 0.03, -0.092); brow.rotation.z = sx * -0.12;
+        head.add(ear, eye, brow);
+      }
+      const lips = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.006, 0.008, 1, 0.003), m.accent);
+      (lips.material as THREE.Material) = m.skin;
+      lips.position.set(0, -0.058, -0.088);
+      const neck = new THREE.Mesh(limbGeo(0.08, 0.046, 0.044), m.skin);
+      neck.position.y = -0.165;
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.022, 10, 20), m.jacket);
+      collar.rotation.x = Math.PI / 2; collar.position.y = -0.155;
+      const tie = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.007, 8, 14), m.accent);
+      tie.position.set(0, 0.04, 0.1); tie.rotation.x = 0.6;
+      head.add(skull, hairCap, nose, lips, neck, collar, tie);
+      // ponytail: a short verlet chain hanging from the tie, swung by the body's motion
+      for (let i = 0; i < 6; i++) {
+        const r0 = 0.024 * (1 - i * 0.12), r1 = 0.024 * (1 - (i + 1) * 0.12);
+        const seg = new THREE.Mesh(limbGeo(0.052, r0, Math.max(0.004, r1), 0.003, 0.8, 10), m.hair);
+        seg.castShadow = true;
+        this.tailMeshes.push(seg);
+        this.root.add(seg);
+        this.tailPts.push(new THREE.Vector3()); this.tailPrev.push(new THREE.Vector3());
+      }
+      this.tailPts.push(new THREE.Vector3()); this.tailPrev.push(new THREE.Vector3());
+      head.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
       this.root.add(this.head);
     }
   }
@@ -307,6 +416,7 @@ export class RunnerBody {
     if (this.head) {
       this.head.position.copy(eyePos).addScaledVector(fwd, -0.06).addScaledVector(up, 0.02);
       this.head.rotation.set(d.pitch * 0.5, d.yaw, 0, 'YXZ');
+      this.updateTail(dt);
     }
     // in first person: hide the torso when it would intersect the near plane (looking down steeply)
     if (this.firstPerson) this.torso.visible = d.pitch > -1.25 || st !== PState.Ground;
@@ -439,6 +549,45 @@ export class RunnerBody {
     }
   }
   private lastPelvis = V();
+  private tailPts: THREE.Vector3[] = [];
+  private tailPrev: THREE.Vector3[] = [];
+  private tailMeshes: THREE.Mesh[] = [];
+  private tailInit = false;
+
+  /** verlet ponytail: anchored at the hair tie, gravity + damping + fixed segment lengths */
+  private updateTail(dt: number) {
+    if (!this.head || !this.tailPts.length) return;
+    this.head.updateMatrixWorld();
+    const anchor = new THREE.Vector3(0, 0.03, 0.11).applyMatrix4(this.head.matrixWorld);
+    const back = new THREE.Vector3(0, -0.4, 1).transformDirection(this.head.matrixWorld);
+    const segL = 0.05;
+    if (!this.tailInit) {
+      for (let i = 0; i < this.tailPts.length; i++) { this.tailPts[i].copy(anchor).addScaledVector(back, segL * i); this.tailPrev[i].copy(this.tailPts[i]); }
+      this.tailInit = true;
+    }
+    const h = Math.min(dt, 1 / 30);
+    const center = new THREE.Vector3(0, 0, 0).applyMatrix4(this.head.matrixWorld);
+    for (let i = 1; i < this.tailPts.length; i++) {
+      const p = this.tailPts[i], q = this.tailPrev[i];
+      const vx = (p.x - q.x) * 0.94, vy = (p.y - q.y) * 0.94, vz = (p.z - q.z) * 0.94;
+      q.copy(p);
+      p.x += vx; p.y += vy - 9.8 * h * h; p.z += vz;
+    }
+    for (let it = 0; it < 4; it++) {
+      this.tailPts[0].copy(anchor);
+      for (let i = 1; i < this.tailPts.length; i++) {
+        const a = this.tailPts[i - 1], b = this.tailPts[i];
+        const d = V().subVectors(b, a); const L = d.length() || 1e-5;
+        b.copy(a).addScaledVector(d, segL / L);
+        // keep the hair outside the skull and neck
+        const c = V().subVectors(b, center); const cl = c.length();
+        if (cl < 0.12) b.copy(center).addScaledVector(c, 0.12 / Math.max(cl, 1e-4));
+      }
+      // slight stiffness: first segment leans back from the tie
+      this.tailPts[1].lerp(V().copy(anchor).addScaledVector(back, segL), 0.25);
+    }
+    for (let i = 0; i < this.tailMeshes.length; i++) setSegment(this.tailMeshes[i], this.tailPts[i], this.tailPts[i + 1], V(1, 0, 0));
+  }
 
   private updateArms(dt: number, d: BodyDriver, view: THREE.Matrix4, eyePos: THREE.Vector3,
                      fwd: THREE.Vector3, right: THREE.Vector3, up: THREE.Vector3, speed: number, sn: number) {

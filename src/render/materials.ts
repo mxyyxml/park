@@ -48,6 +48,8 @@ export function installFogChunks() {
   float fogFactor = 1.0 - exp(-max(fogAmt, 0.0));
   float sunAmt = pow(max(dot(fogDir, fogSunDir), 0.0), 8.0);
   vec3 fogCol = mix(fogColor, fogSunColor, sunAmt * 0.6);
+  // sky occlusion in street canyons: less skylight reaches surfaces near street level
+  gl_FragColor.rgb *= mix(0.6, 1.0, smoothstep(0.0, 36.0, vFogWorldPos.y));
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fogCol, fogFactor);
 #endif`;
   THREE.ShaderChunk.fog_pars_vertex = /* glsl */`
@@ -75,6 +77,39 @@ function withFog<M extends THREE.Material>(m: M): M {
 }
 
 function std(p: THREE.MeshStandardMaterialParameters) { return withFog(new THREE.MeshStandardMaterial(p)); }
+
+/**
+ * Detail layer: re-sample the material's own normal and albedo maps at a higher frequency
+ * (rotated to break up tiling) so surfaces keep micro-detail at arm's length, fading out with
+ * distance so far surfaces don't shimmer.
+ */
+export function addDetail<M extends THREE.MeshStandardMaterial>(m: M, scale: number, strength: number): M {
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <map_fragment>', `#include <map_fragment>
+#ifdef USE_MAP
+  float dDist = length(vViewPosition);
+  float dFade = 1.0 - smoothstep(6.0, 28.0, dDist);
+  mat2 dRot = mat2(0.8, -0.6, 0.6, 0.8);
+  vec3 dAlb = texture2D(map, dRot * vMapUv * ${scale.toFixed(2)}).rgb;
+  float dLum = dot(dAlb, vec3(0.333));
+  diffuseColor.rgb *= mix(1.0, 0.72 + dLum * 0.56, 0.5 * dFade);
+#endif`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+#if defined(USE_NORMALMAP_TANGENTSPACE) && defined(USE_MAP)
+  {
+    vec3 dN = texture2D(normalMap, dRot * vNormalMapUv * ${scale.toFixed(2)}).xyz * 2.0 - 1.0;
+    dN.xy *= normalScale * ${strength.toFixed(2)} * dFade;
+    normal = normalize(normal + tbn * vec3(dN.xy, 0.0));
+  }
+#endif`);
+  };
+  const key = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => key() + `|detail${scale}`;
+  return m;
+}
 
 /**
  * Facade material: procedural curtain-wall / ribbon / punched / fin facades with
@@ -206,11 +241,11 @@ export interface MaterialLib {
 
 export function createMaterials(): MaterialLib {
   installFogChunks();
-  const concrete = T.concreteSet(512, 0.4);
-  const concreteDark = T.concreteSet(256, 0, 1);
-  const concreteWarm = T.concreteSet(256, 1.0);
-  const gravel = T.gravelSet(512);
-  const roof = T.roofSet(512);
+  const concrete = T.concreteSet(1024, 0.4);
+  const concreteDark = T.concreteSet(512, 0, 1);
+  const concreteWarm = T.concreteSet(512, 1.0);
+  const gravel = T.gravelSet(1024);
+  const roof = T.roofSet(1024);
   const metal = T.metalSet(256);
   const metalP = T.metalSet(256, true);
   const wood = T.woodSet(256);
@@ -225,7 +260,7 @@ export function createMaterials(): MaterialLib {
   const ts = (s: T.TexSet, extra: THREE.MeshStandardMaterialParameters = {}, ns = 1) => {
     const m = std({ map: s.map, normalMap: s.normalMap, roughnessMap: s.roughnessMap, ...extra });
     m.normalScale.set(ns, ns);
-    return m;
+    return addDetail(m, 4.7, 0.55);
   };
 
   const screen = std({ map: ads, emissiveMap: ads, emissive: 0xffffff, emissiveIntensity: 1.1, roughness: 0.35, metalness: 0.1 });
@@ -243,7 +278,7 @@ export function createMaterials(): MaterialLib {
     glassDark: std({ color: 0x1b2328, roughness: 0.05, metalness: 0.8 }),
     wood: ts(wood),
     grass: ts(grass),
-    foliage: std({ color: 0x5b8a3a, roughness: 0.85, vertexColors: true, flatShading: true }),
+    foliage: std({ color: 0x5b8a3a, roughness: 0.8, vertexColors: true, flatShading: true }),
     foliageDark: std({ color: 0x3e6b2c, roughness: 0.9, vertexColors: true, flatShading: true }),
     trunk: std({ color: 0x5a4636, roughness: 0.9 }),
     facade: facadeMaterial(concrete),

@@ -1,6 +1,6 @@
 import { F, Surface } from '../physics/collision';
 import { Building, Frame, WorldBuilder } from './builder';
-import { beam, box, cylinder, quad, sphere } from './geo';
+import { beam, blob, box, cylinder, quad, sphere } from './geo';
 
 /** Rooftop air-conditioning unit (≈1.1 m tall: vaultable). Local: x width, z depth. */
 export function acUnit(b: WorldBuilder, f: Frame, w = 1.8, d = 1.3, h = 1.1) {
@@ -69,6 +69,10 @@ export function stairHouse(b: WorldBuilder, f: Frame, w = 3.2, d = 4.2, h = 2.9)
   const [x0, z0, x1, z1] = f.rect(-w / 2, -d / 2, w / 2, d / 2);
   const y = f.y;
   b.solid('concrete', x0, y, z0, x1, y + h, z1, Surface.Concrete, 0, { bevel: 0.04 });
+  {
+    const [lcx0, lcz0, lcx1, lcz1] = f.rect(-0.3, -d / 2 - 0.22, 0.3, -d / 2);
+    b.cbox(lcx0, y, lcz0, lcx1, y + h, lcz1, Surface.Metal, F.LADDER);
+  }
   if (!b.visual) return;
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
   // roof cap
@@ -90,8 +94,6 @@ export function stairHouse(b: WorldBuilder, f: Frame, w = 3.2, d = 4.2, h = 2.9)
   const [bx, bz] = f.p(0, -d / 2 - 0.12);
   void cx; void cz;
   ladderVisual(b, bx, y, bz, y + h + 0.9, f.r % 2 === 0 ? 'x' : 'z');
-  const [lcx0, lcz0, lcx1, lcz1] = f.rect(-0.3, -d / 2 - 0.22, 0.3, -d / 2);
-  b.cbox(lcx0, y, lcz0, lcx1, y + h, lcz1, Surface.Metal, F.LADDER);
 }
 
 /** ladder rails & rungs; axis = direction the rungs span */
@@ -150,6 +152,7 @@ export function waterTank(b: WorldBuilder, x: number, y: number, z: number, r = 
     const px = x + lx * r * 0.7, pz = z + lz * r * 0.7;
     b.cbox(px - 0.08, y, pz - 0.08, px + 0.08, y + leg, pz + 0.08, Surface.Metal);
   }
+  b.cbox(x - 0.25, y, z + r, x + 0.25, y + leg + h, z + r + 0.2, Surface.Metal, F.LADDER);
   if (!b.visual) return;
   const g = b.g('metalPainted', x, z);
   g.colCur = [0.86, 0.87, 0.88];
@@ -165,7 +168,6 @@ export function waterTank(b: WorldBuilder, x: number, y: number, z: number, r = 
   beam(gd, x + r * 0.7, y + 0.2, z + r * 0.7, x - r * 0.7, y + leg - 0.1, z + r * 0.7, 0.05, 0.05);
   box(gd, x - r, y + leg - 0.12, z - r, x + r, y + leg, z + r);
   ladderVisual(b, x, y, z + r + 0.1, y + leg + h + 0.6, 'x', 0.42);
-  b.cbox(x - 0.25, y, z + r, x + 0.25, y + leg + h, z + r + 0.2, Surface.Metal, F.LADDER);
 }
 
 export function skylight(b: WorldBuilder, x0: number, y: number, z0: number, x1: number, z1: number) {
@@ -351,7 +353,9 @@ export function tree(b: WorldBuilder, x: number, y: number, z: number, s: number
     const tint = 0.85 + rng() * 0.3;
     g.colCur = [tint, tint * (0.95 + rng() * 0.1), tint * 0.9];
     const rr = (0.7 + rng() * 0.6) * s;
-    sphere(g, fx, fy, fz, rr, rr * 0.8, rr, 9);
+    blob(g, fx, fy, fz, rr, rng() * 100, 12, 0.78);
+    // smaller satellite clumps break up the silhouette
+    if (rng() < 0.7) blob(g, fx + (rng() - 0.5) * rr, fy + rr * 0.35, fz + (rng() - 0.5) * rr, rr * 0.55, rng() * 100, 9, 0.8);
     if (i < 3) beam(gt, x, y + 1.8 * s, z, fx, fy - 0.3, fz, 0.06 * s, 0.06 * s);
   }
 }
@@ -361,7 +365,7 @@ export function shrub(b: WorldBuilder, x: number, y: number, z: number, s: numbe
   for (let i = 0; i < 3; i++) {
     const g = b.g(rng() < 0.5 ? 'foliage' : 'foliageDark', x, z);
     const t = 0.8 + rng() * 0.3; g.colCur = [t, t, t];
-    sphere(g, x + (rng() - 0.5) * s, y + 0.3 * s, z + (rng() - 0.5) * s, 0.5 * s, 0.42 * s, 0.5 * s, 8);
+    blob(g, x + (rng() - 0.5) * s, y + 0.3 * s, z + (rng() - 0.5) * s, 0.5 * s, rng() * 100, 10, 0.82);
   }
 }
 

@@ -465,9 +465,12 @@ function buildBuilding(b: WorldBuilder, bl: Building, rng: Rng, atriumFloor: num
   const [fh, cw] = STYLE_PARAMS[style];
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
   const g = b.g('facade', cx, cz);
-  g.facadeCur = [style, rng.int(0, 400), fh + rng.range(-0.1, 0.2), cw];
+  const fseed = rng.int(0, 400);
+  const floorH = fh + rng.range(-0.1, 0.2);
+  g.facadeCur = [style, fseed, floorH, cw];
   const topY = bl.kind === 'atrium-interior' ? atriumFloor - 0.4 : bl.kind === 'skeleton' ? 8 : h - 0.7;
   box(g, minX, 0, minZ, maxX, topY, maxZ, { skip: 4 | 8 });
+  if (bl.kind !== 'skeleton') facadeRelief(b, minX, minZ, maxX, maxZ, topY, style, floorH, cw);
   // podium / lobby band
   b.vbox('concreteDark', minX - 0.25, 0, minZ - 0.25, maxX + 0.25, 4.6, maxZ + 0.25, { bevel: 0.05, skip: 4 });
   b.vbox('concrete', minX - 0.35, 4.6, minZ - 0.35, maxX + 0.35, 5.0, maxZ + 0.35, { bevel: 0.05 });
@@ -486,6 +489,38 @@ function buildBuilding(b: WorldBuilder, bl: Building, rng: Rng, atriumFloor: num
   box(gc, minX - 0.08, h - 0.7, minZ - 0.08, maxX + 0.08, h, maxZ + 0.08, { bevel: 0.05, skip: 4 });
   const roofMat: MatKey = surface === Surface.Gravel ? 'gravel' : surface === Surface.Grass ? 'grass' : surface === Surface.Metal ? 'roof' : surface === Surface.Rubber ? 'roof' : 'concreteWarm';
   b.vbox(roofMat, minX + 0.35, h, minZ + 0.35, maxX - 0.35, h + 0.015, maxZ - 0.35);
+}
+
+/**
+ * Real geometry over the shader facade, aligned to its window grid: floor-slab bands, vertical
+ * fins and curtain-wall mullions. They cast and catch shadows, which flat shading can't fake.
+ */
+function facadeRelief(b: WorldBuilder, minX: number, minZ: number, maxX: number, maxZ: number, topY: number, style: number, floorH: number, cw: number) {
+  const y0 = 5.0;
+  const bandMat: MatKey = style === 0 ? 'metalDark' : 'concrete';
+  const out = style === 0 ? 0.05 : style === 2 ? 0.07 : 0.12;
+  const bh = style === 1 ? 0.42 : style === 0 ? 0.12 : 0.2;
+  for (let k = Math.ceil(y0 / floorH); k * floorH < topY - 0.6; k++) {
+    const y = k * floorH;
+    // four sides, overlapping at the corners
+    b.vbox(bandMat, minX - out, y - bh / 2, minZ - out, maxX + out, y + bh / 2, minZ, { skip: 32 });
+    b.vbox(bandMat, minX - out, y - bh / 2, maxZ, maxX + out, y + bh / 2, maxZ + out, { skip: 16 });
+    b.vbox(bandMat, minX - out, y - bh / 2, minZ, minX, y + bh / 2, maxZ, { skip: 2 });
+    b.vbox(bandMat, maxX, y - bh / 2, minZ, maxX + out, y + bh / 2, maxZ, { skip: 1 });
+  }
+  if (style !== 0 && style !== 3) return;
+  // vertical members at the shader's cell boundaries (u = ±x or ±z multiples of the cell width)
+  const depth = style === 3 ? 0.22 : 0.045, thick = style === 3 ? 0.07 : 0.05;
+  const mat: MatKey = style === 3 ? 'concrete' : 'metalDark';
+  const yTop = topY - 0.05;
+  for (let x = Math.ceil((minX + 0.4) / cw) * cw; x < maxX - 0.4; x += cw) {
+    b.vbox(mat, x - thick / 2, y0, minZ - depth, x + thick / 2, yTop, minZ, { skip: 32 | 4 });
+    b.vbox(mat, x - thick / 2, y0, maxZ, x + thick / 2, yTop, maxZ + depth, { skip: 16 | 4 });
+  }
+  for (let z = Math.ceil((minZ + 0.4) / cw) * cw; z < maxZ - 0.4; z += cw) {
+    b.vbox(mat, minX - depth, y0, z - thick / 2, minX, yTop, z + thick / 2, { skip: 2 | 4 });
+    b.vbox(mat, maxX, y0, z - thick / 2, maxX + depth, yTop, z + thick / 2, { skip: 1 | 4 });
+  }
 }
 
 function buildParapets(b: WorldBuilder, bl: Building, rng: Rng, doors: { axis: 'x' | 'z'; side: number; lo: number; hi: number }[]) {

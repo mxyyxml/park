@@ -7,6 +7,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { CSM } from 'three/addons/csm/CSM.js';
 import { fogUniforms } from './materials';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
@@ -76,6 +77,9 @@ export class Renderer {
   private shadowSize = 2048;
   private shadowExtent = 70;
   envMap: THREE.Texture | null = null;
+  csm: CSM | null = null;
+  private csmMats = new Map<THREE.Material, THREE.Material['onBeforeCompile']>();
+  private lastFov = 0; private lastAspect = 0;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality) {
     this.quality = quality;
@@ -105,10 +109,11 @@ export class Renderer {
     su.sunPosition.value.copy(this.sunDir);
     fogUniforms.fogSunDir.value.copy(this.sunDir);
 
+    // the sun proper is a cascaded-shadow light rig (see applyQuality); this light is only
+    // used while capturing the environment map
     this.sun = new THREE.DirectionalLight(0xfff1de, 3.4);
-    this.sun.castShadow = true;
-    this.sun.shadow.bias = -0.00025;
-    this.sun.shadow.normalBias = 0.035;
+    this.sun.position.copy(this.sunDir).multiplyScalar(100);
+    this.sun.visible = false;
     this.scene.add(this.sun, this.sun.target);
     this.hemi = new THREE.HemisphereLight(0xcfe3ff, 0x8a8478, 0.65);
     this.scene.add(this.hemi);
@@ -133,14 +138,8 @@ export class Renderer {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const ratio = q === 'low' ? Math.min(dpr, 1) * 0.75 : q === 'medium' ? Math.min(dpr, 1) : q === 'high' ? Math.min(dpr, 1.5) : dpr;
     this.renderer.setPixelRatio(ratio);
-    this.shadowSize = q === 'low' ? 1024 : q === 'medium' ? 2048 : 4096;
-    this.shadowExtent = q === 'low' ? 45 : 70;
-    this.sun.shadow.mapSize.set(this.shadowSize, this.shadowSize);
-    this.sun.shadow.map?.dispose();
-    (this.sun.shadow as any).map = null;
-    const cam = this.sun.shadow.camera;
-    cam.left = -this.shadowExtent; cam.right = this.shadowExtent; cam.top = this.shadowExtent; cam.bottom = -this.shadowExtent;
-    cam.near = 1; cam.far = 600; cam.updateProjectionMatrix();
+    this.shadowSize = q === 'low' ? 1024 : q === 'medium' ? 2048 : q === 'high' ? 2048 : 4096;
+    this.setupCSM(q === 'low' ? 2 : q === 'medium' ? 3 : 4, q === 'low' ? 220 : q === 'medium' ? 380 : 520);
     // rebuild pass chain
     const passes = [...this.composer.passes];
     for (const p of passes.slice(1)) this.composer.removePass(p);
@@ -168,6 +167,41 @@ export class Renderer {
     this.resize();
   }
 
+  /** Cascaded shadow maps: crisp contact shadows near the runner, whole-building shadows out to the skyline. */
+  private setupCSM(cascades: number, maxFar: number) {
+    if (this.csm) { this.csm.remove(); this.csm.dispose(); }
+    this.csm = new CSM({
+      camera: this.camera, parent: this.scene, cascades, maxFar, mode: 'practical',
+      shadowMapSize: this.shadowSize, lightDirection: this.sunDir.clone().negate(), lightIntensity: 3.4,
+      lightNear: 1, lightFar: 3000, lightMargin: 220, shadowBias: -0.0002,
+    });
+    this.csm.fade = true;
+    for (const l of this.csm.lights) { l.color.set(0xfff1de); l.shadow.normalBias = 0.04; }
+    for (const m of this.csmMats.keys()) this.setupShadowMaterial(m);
+    this.lastFov = 0;
+  }
+
+  /** Register a lit material with the cascade rig, chaining onto its existing shader hooks. */
+  setupShadowMaterial(m: THREE.Material) {
+    if (!this.csm) return;
+    if (!this.csmMats.has(m)) this.csmMats.set(m, m.onBeforeCompile);
+    const base = this.csmMats.get(m)!;
+    this.csm.setupMaterial(m);
+    const csmHook = m.onBeforeCompile;
+    m.onBeforeCompile = (sh, r) => { base.call(m, sh, r); csmHook.call(m, sh, r); };
+    m.needsUpdate = true;
+  }
+
+  registerSceneMaterials() {
+    this.scene.traverse((o) => {
+      const mm = (o as THREE.Mesh).material;
+      if (!mm) return;
+      for (const m of Array.isArray(mm) ? mm : [mm]) {
+        if ((m as THREE.MeshStandardMaterial).isMeshStandardMaterial && !this.csmMats.has(m)) this.setupShadowMaterial(m);
+      }
+    });
+  }
+
   resize() {
     const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
     this.renderer.setSize(w, h, false);
@@ -175,6 +209,7 @@ export class Renderer {
     this.composer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.lastFov = 0;
   }
 
   /** Build image-based lighting from sky + city, rendered once from above the rooftops. */
@@ -183,10 +218,15 @@ export class Renderer {
     const cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
     const cubeCam = new THREE.CubeCamera(1, 5000, cubeRT);
     cubeCam.position.copy(center);
-    const fog = this.scene.fog; this.scene.fog = fog;
-    this.sun.castShadow = false;
+    // capture without shadows using the plain sun light
+    this.renderer.shadowMap.enabled = false;
+    const csmLights = this.csm ? this.csm.lights : [];
+    for (const l of csmLights) l.visible = false;
+    this.sun.visible = true;
     cubeCam.update(this.renderer, this.scene);
-    this.sun.castShadow = true;
+    this.sun.visible = false;
+    for (const l of csmLights) l.visible = true;
+    this.renderer.shadowMap.enabled = true;
     const env = pmrem.fromCubemap(cubeRT.texture).texture;
     this.envMap = env;
     this.scene.environment = env;
@@ -195,19 +235,15 @@ export class Renderer {
     pmrem.dispose();
   }
 
-  /** keep the shadow frustum centred on the player, snapped to texels to prevent shimmering */
-  updateSun(focus: THREE.Vector3) {
-    const d = 250;
-    const texel = (this.shadowExtent * 2) / this.shadowSize;
-    // snap in light space
-    const lightRot = new THREE.Matrix4().lookAt(new THREE.Vector3(), this.sunDir.clone().negate(), new THREE.Vector3(0, 1, 0));
-    const inv = lightRot.clone().invert();
-    const p = focus.clone().applyMatrix4(inv);
-    p.x = Math.round(p.x / texel) * texel; p.y = Math.round(p.y / texel) * texel;
-    p.applyMatrix4(lightRot);
-    this.sun.target.position.copy(p);
-    this.sun.position.copy(p).addScaledVector(this.sunDir, d);
-    this.sun.target.updateMatrixWorld();
+  /** update the shadow cascades for the current camera */
+  updateSun(_focus: THREE.Vector3) {
+    if (!this.csm) return;
+    const cam = this.camera;
+    if (Math.abs(cam.fov - this.lastFov) > 0.6 || Math.abs(cam.aspect - this.lastAspect) > 0.01) {
+      this.csm.updateFrustums();
+      this.lastFov = cam.fov; this.lastAspect = cam.aspect;
+    }
+    this.csm.update();
   }
 
   render(dt: number, speed: number) {

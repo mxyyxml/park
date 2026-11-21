@@ -27,7 +27,7 @@ export function buildWorldMeshes(b: WorldBuilder, mats: MaterialLib): WorldMeshe
       if (g.vcount === 0) continue;
       const mesh = new THREE.Mesh(toGeometry(g), mats.get(key));
       const transparent = key === 'glass';
-      mesh.castShadow = !far && !transparent && key !== 'lamp' && key !== 'stripe' && key !== 'screen';
+      mesh.castShadow = !transparent && key !== 'lamp' && key !== 'stripe' && key !== 'screen' && key !== 'cable' && !(far && key === 'asphalt');
       mesh.receiveShadow = !transparent;
       if (transparent) mesh.renderOrder = 2;
       mesh.matrixAutoUpdate = false;

@@ -3,3 +3,4 @@ dist
 test-results
 *.log
 tests/debug
+dist-artifact

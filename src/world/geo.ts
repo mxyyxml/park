@@ -237,3 +237,27 @@ export function quad(g: GeoBatch, p: number[][], n: number[], uvs?: number[][]) 
   if (flip) { g.tri(ids[0], ids[2], ids[1]); g.tri(ids[0], ids[3], ids[2]); }
   else { g.tri(ids[0], ids[1], ids[2]); g.tri(ids[0], ids[2], ids[3]); }
 }
+
+/** Lumpy sphere for foliage: radial noise keyed on direction so seams stay closed. */
+export function blob(g: GeoBatch, cx: number, cy: number, cz: number, r: number, seed: number, seg = 10, squash = 0.8) {
+  const base = g.vcount;
+  const rings = Math.max(5, Math.floor(seg * 0.7));
+  const n3 = (x: number, y: number, z: number) => {
+    const h = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + seed * 4.13) * 43758.5453;
+    return h - Math.floor(h);
+  };
+  for (let i = 0; i <= rings; i++) {
+    const th = (i / rings) * Math.PI;
+    for (let j = 0; j <= seg; j++) {
+      const ph = ((j % seg) / seg) * Math.PI * 2;
+      const nx = Math.sin(th) * Math.cos(ph), ny = Math.cos(th), nz = Math.sin(th) * Math.sin(ph);
+      const q = (v: number) => Math.round(v * 50) / 50;
+      const k = 0.78 + 0.32 * n3(q(nx), q(ny), q(nz)) + 0.1 * Math.sin(nx * 5 + seed) * Math.cos(nz * 4);
+      g.vert(cx + nx * r * k, cy + ny * r * k * squash, cz + nz * r * k, nx, ny, nz, j / seg, i / rings);
+    }
+  }
+  for (let i = 0; i < rings; i++) for (let j = 0; j < seg; j++) {
+    const a = base + i * (seg + 1) + j, b = a + seg + 1;
+    g.tri(a, a + 1, b); g.tri(a + 1, b + 1, b);
+  }
+}

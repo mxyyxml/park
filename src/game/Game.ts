@@ -17,7 +17,10 @@ import { Save, Settings } from './Save';
 import { fmt, UI } from '../ui/UI';
 
 const DT = 1 / 120;
-const CALIB_VERSION = 3;
+/** primary input is a finger (phones/tablets); touchscreen laptops with a mouse keep desktop controls */
+function isTouchDevice() { return navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches; }
+function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
+const CALIB_VERSION = 4;
 
 type Mode = 'loading' | 'attract' | 'free' | 'trial' | 'replay';
 
@@ -84,6 +87,7 @@ export class Game {
     const params = new URLSearchParams(location.search);
     const s = this.save.settings;
     if (params.get('q')) s.quality = params.get('q') as Settings['quality'];
+    else if (!localStorageHasSettings() && isTouchDevice()) s.quality = 'low';
     this.ui.setLoading(0.05, 'Initialising renderer');
     await this.yieldUI();
     this.r = new Renderer(this.canvas, s.quality);
@@ -139,18 +143,30 @@ export class Game {
     }
     this.save.flush();
 
+    // every lit material joins the cascaded shadow rig (after all scene content exists)
+    this.r.registerSceneMaterials();
     this.applySettings();
     this.input.onPausePressed = () => this.onPauseKey();
     this.input.onRestartPressed = () => { if (this.mode === 'trial' && !this.paused) this.startTrial(this.trial!, true); };
     window.addEventListener('keydown', (e) => { if (e.code === 'F3') { e.preventDefault(); this.debugOn = !this.debugOn; this.ui.debug.classList.toggle('hidden', !this.debugOn); } });
     document.addEventListener('pointerlockchange', () => {
-      if (!document.pointerLockElement && (this.mode === 'free' || this.mode === 'trial') && !this.paused && !this.ui.menuOpen) this.pause();
+      if (!document.pointerLockElement && !this.input.fallbackLook && (this.mode === 'free' || this.mode === 'trial') && !this.paused && !this.ui.menuOpen) this.pause();
     });
     this.canvas.addEventListener('click', () => {
       this.audio.init();
       if ((this.mode === 'free' || this.mode === 'trial') && !this.paused) this.input.lock();
     });
     this.ui.prompt.addEventListener('click', () => { this.input.lock(); });
+    // touch devices: on-screen controls, and no pointer lock needed
+    const touchDevice = isTouchDevice();
+    if (touchDevice) {
+      const tl = this.ui.touchLayer;
+      this.input.enableTouch(tl, tl.querySelector('.up') as HTMLElement, tl.querySelector('.down') as HTMLElement);
+      this.input.fallbackLook = true;
+      this.input.onTouchStick = (x, y, ox, oy, on) => this.ui.showStick(x, y, ox, oy, on);
+      (tl.querySelector('.pause') as HTMLElement).addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); this.onPauseKey(); }, { passive: false });
+      tl.addEventListener('touchstart', () => this.audio.init(), { once: true });
+    }
     window.addEventListener('resize', () => this.r.resize());
 
     this.ui.setLoading(1, 'Ready');
@@ -257,6 +273,7 @@ export class Game {
   }
 
   private enterPlay() {
+    this.ui.touchLayer.classList.toggle('hidden', !this.input.touch.active);
     this.demo = null;
     this.showBody.setVisible(false);
     this.ui.closeMenu();
@@ -444,7 +461,7 @@ export class Game {
   private updatePlay(dt: number) {
     const p = this.player;
     if (this.paused) { this.ui.prompt.classList.add('hidden'); return; }
-    this.ui.prompt.classList.toggle('hidden', this.input.locked || this.input.enabled === false);
+    this.ui.prompt.classList.toggle('hidden', this.input.active || this.input.enabled === false);
     // input
     let f = this.input.sample(dt);
     if (this.autopilot) f = this.autopilot.step(p, dt);

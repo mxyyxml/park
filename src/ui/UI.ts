@@ -40,6 +40,13 @@ export class UI {
   debug: HTMLElement;
   prompt: HTMLElement;
   private toastT = 0;
+  touchLayer: HTMLElement;
+  showStick(x: number, y: number, ox: number, oy: number, on: boolean) {
+    const st = this.touchLayer.querySelector('.stick') as HTMLElement;
+    st.style.opacity = on ? '1' : '0';
+    st.style.transform = `translate(${ox - 60}px, ${oy - 60}px)`;
+    (st.querySelector('i') as HTMLElement).style.transform = `translate(${x - ox}px, ${y - oy}px)`;
+  }
 
   constructor() {
     this.loading = el('div', { id: 'loading', class: 'layer' }, `<div class="logo">SKYLINE <b>RUNNER</b></div><div class="bar"><i></i></div><div class="msg">Building the city</div>`);
@@ -57,9 +64,12 @@ export class UI {
       <b>UP</b> <kbd>SPACE</kbd> jump · wall-run · wall-climb · grab · vault<br>
       <b>DOWN</b> <kbd>CTRL</kbd>/<kbd>C</kbd> slide · roll on landing · drop<br>
       <b>QUICK TURN</b> <kbd>Q</kbd> &nbsp; <b>WALK</b> <kbd>X</kbd> &nbsp; <b>RESTART</b> <kbd>R</kbd><br>
+      Touch: left thumb moves (push to the edge to sprint), right thumb looks.<br>
       Build speed before gaps — momentum is everything.`);
     this.debug = el('div', { id: 'debug', class: 'hidden' });
     this.prompt = el('div', { id: 'prompt', class: 'hidden' }, 'Click to resume');
+    this.touchLayer = el('div', { id: 'touch', class: 'hidden' }, `<div class="stick"><i></i></div><button class="tbtn up" aria-label="Up: jump, climb, vault">UP</button><button class="tbtn down" aria-label="Down: slide, roll, drop">DOWN</button><button class="tbtn pause" aria-label="Pause">II</button>`);
+    this.hud.append(this.touchLayer);
     this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt);
     this.menu = el('div', { class: 'layer menu hidden' });
     this.fade = el('div', { id: 'fade', class: 'layer' });
