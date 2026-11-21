@@ -289,23 +289,7 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
       // correct anchor positions to lie on roofs
       if (axis === 'x') { sx = hiB === c ? c.minX + 2.2 : a.maxX - 2.2; ex = loB === c ? c.minX + 5 : a.maxX - 5; }
       else { sz = hiB === c ? c.minZ + 2.2 : a.maxZ - 2.2; ez = loB === c ? c.minZ + 5 : a.maxZ - 5; }
-      const sy = hiB.h + 3.1, ey = loB.h + 2.6;
-      b.ziplines.push({ ax: sx, ay: sy, az: sz, bx: ex, by: ey, bz: ez });
-      // posts
-      for (const [px, py, pz, top] of [[sx, hiB.h, sz, sy], [ex, loB.h, ez, ey]]) {
-        b.cbox(px - 0.12, py, pz - 0.12, px + 0.12, top + 0.3, pz + 0.12, Surface.Metal, F.NO_GRAB);
-        if (b.visual) {
-          const g = b.g('red', px, pz);
-          cylinder(g, px, (py + top + 0.3) / 2, pz, 0.1, top + 0.3 - py, 'y', 10);
-          box(b.g('metalDark', px, pz), px - 0.5, py, pz - 0.5, px + 0.5, py + 0.15, pz + 0.5, { bevel: 0.03 });
-        }
-      }
-      if (b.visual) beam(b.g('cable', sx, sz), sx, sy, sz, ex, ey, ez, 0.025, 0.025);
-      edges.push({ a: hiB.id, b: loB.id, kind: 'zip', ax: sx, az: sz, bx: ex, bz: ez });
-      lane(hiB, sx, sz); lane(loB, ex, ez);
-      // keep space around posts
-      b.occupy(hiB, sx - 1.5, sz - 1.5, sx + 1.5, sz + 1.5);
-      b.occupy(loB, ex - 1.5, ez - 1.5, ex + 1.5, ez + 1.5);
+      addZip(hiB, loB, sx, sz, ex, ez);
       return;
     }
     // sky bridge at the lower roof height
@@ -354,6 +338,31 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
     lane(a, ex, ez); lane(c, fx, fz);
     void lowB;
   };
+  /** zipline from roof hiB (start post) down to roof loB (end post) */
+  const addZip = (hiB: Building, loB: Building, sx: number, sz: number, ex: number, ez: number) => {
+    const sy = hiB.h + 3.1, ey = loB.h + 2.6;
+    // a rider hangs ~2 m under the cable: open the roof-edge wall where the cable crosses it at both ends
+    const L = Math.hypot(ex - sx, ez - sz), dx = (ex - sx) / L, dz = (ez - sz) / L;
+    for (const [bl, px, pz, ux, uz] of [[hiB, sx, sz, dx, dz], [loB, ex, ez, -dx, -dz]] as [Building, number, number, number, number][]) {
+      const tx = ux > 1e-6 ? (bl.maxX - px) / ux : ux < -1e-6 ? (bl.minX - px) / ux : Infinity;
+      const tz = uz > 1e-6 ? (bl.maxZ - pz) / uz : uz < -1e-6 ? (bl.minZ - pz) / uz : Infinity;
+      if (tx < tz) { const c = pz + uz * tx; doors.push({ bl, axis: 'x', side: Math.sign(ux), lo: c - 2.6, hi: c + 2.6 }); }
+      else { const c = px + ux * tz; doors.push({ bl, axis: 'z', side: Math.sign(uz), lo: c - 2.6, hi: c + 2.6 }); }
+    }
+    b.ziplines.push({ ax: sx, ay: sy, az: sz, bx: ex, by: ey, bz: ez });
+    for (const [px, py, pz, top] of [[sx, hiB.h, sz, sy], [ex, loB.h, ez, ey]]) {
+      b.cbox(px - 0.12, py, pz - 0.12, px + 0.12, top + 0.3, pz + 0.12, Surface.Metal, F.NO_GRAB);
+      if (b.visual) {
+        cylinder(b.g('red', px, pz), px, (py + top + 0.3) / 2, pz, 0.1, top + 0.3 - py, 'y', 10);
+        box(b.g('metalDark', px, pz), px - 0.5, py, pz - 0.5, px + 0.5, py + 0.15, pz + 0.5, { bevel: 0.03 });
+      }
+    }
+    if (b.visual) beam(b.g('cable', sx, sz), sx, sy, sz, ex, ey, ez, 0.025, 0.025);
+    edges.push({ a: hiB.id, b: loB.id, kind: 'zip', ax: sx, az: sz, bx: ex, bz: ez });
+    lane(hiB, sx, sz); lane(loB, ex, ez);
+    b.occupy(hiB, sx - 1.5, sz - 1.5, sx + 1.5, sz + 1.5);
+    b.occupy(loB, ex - 1.5, ez - 1.5, ex + 1.5, ez + 1.5);
+  };
   const doors: { bl: Building; axis: 'x' | 'z'; side: number; lo: number; hi: number }[] = [];
   for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) {
     if (i + 1 < COLS) connect(blockAt(i, j), blockAt(i + 1, j), 'x', (i + j) % 2 === 1);
@@ -364,6 +373,50 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
   spireRoute = buildSpire(b, spireB, rng, edges, neighbours, addCollectible);
   const atriumInfo = buildAtrium(b, atriumB, atriumFloor, rng, neighbours, edges);
   buildSkeletonAndCrane(b, consB, rng, edges, blockLots, addCollectible);
+
+  // ---------------------------------------------------------------- extra ziplines
+  // long rides from high roofs (the Spire included) down to lower roofs: the whole cable is
+  // checked clear for a hanging rider, posts need free roof space
+  {
+    const B = b.buildings.filter((x) => x.kind !== 'skeleton' && x.kind !== 'atrium-interior');
+    const usedStart = new Set(b.ziplines.map((z) => `${Math.round(z.ax)},${Math.round(z.az)}`));
+    const starts = new Set<number>();
+    const cand: { hi: Building; lo: Building; sx: number; sz: number; ex: number; ez: number; L: number }[] = [];
+    const center = (x: Building) => [(x.minX + x.maxX) / 2, (x.minZ + x.maxZ) / 2];
+    const inside = (x: Building, px: number, pz: number, m: number) => px > x.minX + m && px < x.maxX - m && pz > x.minZ + m && pz < x.maxZ - m;
+    for (const hi of B) for (const lo of B) {
+      if (hi === lo || hi.h - lo.h < 4) continue;
+      const [hx, hz] = center(hi), [lx, lz] = center(lo);
+      const L = Math.hypot(lx - hx, lz - hz);
+      if (L < 30 || L > 110) continue;
+      const ux = (lx - hx) / L, uz = (lz - hz) / L;
+      // start post: as close to hi's edge facing lo as stays on the roof; end post well inside lo
+      let sx = hx, sz = hz;
+      for (let k = 0; k < 60 && inside(hi, sx + ux * 0.5, sz + uz * 0.5, 2.2); k++) { sx += ux * 0.5; sz += uz * 0.5; }
+      let ex = lx, ez = lz;
+      for (let k = 0; k < 60 && inside(lo, ex - ux * 0.5, ez - uz * 0.5, 5); k++) { ex -= ux * 0.5; ez -= uz * 0.5; }
+      const sy = hi.h + 3.1, ey = lo.h + 2.6, run = Math.hypot(ex - sx, ez - sz);
+      const slope = (sy - ey) / run;
+      if (run < 25 || slope < 0.07 || slope > 0.32) continue;
+      cand.push({ hi, lo, sx, sz, ex, ez, L: run });
+    }
+    cand.sort((p, q) => (q.hi.kind === 'spire' ? 1000 : 0) + q.L - ((p.hi.kind === 'spire' ? 1000 : 0) + p.L));
+    let added = 0;
+    for (const c of cand) {
+      if (added >= 8 || starts.has(c.hi.id) || usedStart.has(`${Math.round(c.sx)},${Math.round(c.sz)}`)) continue;
+      const sy = c.hi.h + 3.1, ey = c.lo.h + 2.6, run = c.L;
+      if (b.world.overlapCylinder(c.sx, c.hi.h + 0.05, c.sz, 1.2, 3) || b.world.overlapCylinder(c.ex, c.lo.h + 0.05, c.ez, 1.2, 3)) continue;
+      let clear = true;
+      for (let d = 2; d < run - 3 && clear; d += 0.8) {
+        const t = d / run;
+        const x = c.sx + (c.ex - c.sx) * t, z = c.sz + (c.ez - c.sz) * t, y = sy + (ey - sy) * t;
+        if (b.world.overlapCylinder(x, y - 2.3, z, 0.45, 2.5)) clear = false;
+      }
+      if (!clear) continue;
+      addZip(c.hi, c.lo, c.sx, c.sz, c.ex, c.ez);
+      starts.add(c.hi.id); added++;
+    }
+  }
 
   // ---------------------------------------------------------------- parapets & roof props
   for (const bl of b.buildings) {

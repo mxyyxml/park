@@ -22,7 +22,7 @@ const DT = 1 / 120;
 /** primary input is a finger (phones/tablets); touchscreen laptops with a mouse keep desktop controls */
 function isTouchDevice() { return navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches; }
 function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
-const CALIB_VERSION = 4;
+const CALIB_VERSION = 5;
 
 type Mode = 'loading' | 'attract' | 'free' | 'trial' | 'replay';
 

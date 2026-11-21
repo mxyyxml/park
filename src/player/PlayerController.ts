@@ -1276,7 +1276,7 @@ export class PlayerController {
     this.pos.x = hx; this.pos.y = hy - 2.05; this.pos.z = hz;
     this.vel.x = dx / L * this.zipSpeed; this.vel.y = dy / L * this.zipSpeed; this.vel.z = dz / L * this.zipSpeed;
     const release = this.zipT >= 0.97 || this.jumpBuffer > 0 || input.crouchPressed ||
-      this.world.overlapCylinder(this.pos.x, this.pos.y + 0.1, this.pos.z, P.R * 0.9, 1.6);
+      this.world.overlapCylinder(this.pos.x, this.pos.y + 0.1, this.pos.z, P.R * 0.9, 1.6, F.NO_GRAB); // posts and railings do not knock you off
     if (release) {
       this.jumpBuffer = 0;
       if (this.vel.y < 0) this.vel.y *= 0.3;

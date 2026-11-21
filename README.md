@@ -5,6 +5,7 @@ A first-person freerunning game for the browser: momentum-driven parkour across 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
+npm run build:offline  # one self-contained HTML file that plays with no internet
 npm test           # movement physics, camera, level generation, trial validation
 npm run build      # type-check + production build into dist/
 ```
@@ -23,7 +24,7 @@ Click to capture the mouse. Esc pauses. The game also supports a gamepad (standa
 6. **Ctrl** (or **C**) is "down": slide under things at speed, and press it just before a big landing to **roll** and keep your speed.
 7. In time trials, follow the red beam and the marker to each checkpoint. Your best run becomes a red **ghost** to race next time. **R** restarts instantly.
 
-Tips: hit walls at a shallow angle to wall-run; red objects (pipes, ladders, beams, crates) are climbable routes; hold W while falling toward a ledge to grab it; on balance beams, steer with A/D to stay upright.
+Tips: zip lines (red posts with a cable) run from high roofs down across streets and from the top of the Spire: jump at the cable from beside the start post to grab it, press Space or Ctrl to let go early; hit walls at a shallow angle to wall-run; red objects (pipes, ladders, beams, crates) are climbable routes; hold W while falling toward a ledge to grab it; on balance beams, steer with A/D to stay upright.
 
 ## Controls
 
@@ -144,3 +145,7 @@ Photoscanned assets are from [Poly Haven](https://polyhaven.com) (CC0), fetched 
 ## Scope notes
 
 The character is Blender-sculpted by script, not by an artist's hand. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.
+
+## Playing offline
+
+`npm run build:offline` writes `dist-offline/skyline-runner-offline.html` (about 10 MB). Code, styles and every texture and model are embedded in that one file, so it runs from your device with no network: open it in Chrome, Edge, Firefox or Safari. Progress (times, ghosts, shards) is saved in that browser.

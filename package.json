@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build:page": "npm run build && node tools/artifact.mjs"
+    "build:page": "npm run build && node tools/artifact.mjs",
+    "build:offline": "npm run build && node tools/offline.mjs"
   },
   "dependencies": {
     "three": "0.180.0"

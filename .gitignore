@@ -4,3 +4,4 @@ test-results
 *.log
 tests/debug
 dist-artifact
+dist-offline
