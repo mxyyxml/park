@@ -12,6 +12,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { P, PState, TraverseKind } from './PlayerController';
 import type { TexSet } from '../render/textures';
 import { withFog } from '../render/materials';
+import { CharacterAssets, instantiate } from './assets';
 
 /** The subset of controller state the body needs (PlayerController satisfies it; ghosts fake it). */
 export interface BodyDriver {
@@ -191,6 +192,47 @@ class Hand {
   }
 }
 
+interface HandLike { group: THREE.Group; curl: number; side: number; setCurl(c: number): void }
+
+/** Sculpted, skinned hand from hand.glb: finger bones are curled about their local X axis. */
+class SculptedHand implements HandLike {
+  group = new THREE.Group();
+  curl = 0.4;
+  private fingers: THREE.Bone[][] = [];
+  private thumb: THREE.Bone[] = [];
+  private rest = new Map<THREE.Bone, THREE.Quaternion>();
+  private sign = 1;
+  constructor(public side: number, src: THREE.Object3D, mats: Record<string, THREE.Material>) {
+    const o = instantiate(src, mats);
+    // the asset is a right hand (thumb on -X); mirror it for the left
+    if (side < 0) o.scale.x = -1;
+    this.group.add(o);
+    const bone = (n: string) => { const b = o.getObjectByName(n) as THREE.Bone; this.rest.set(b, b.quaternion.clone()); return b; };
+    for (let f = 0; f < 4; f++) this.fingers.push([0, 1, 2].map((k) => bone(`f${f}_${k}`)));
+    this.thumb = [0, 1, 2].map((k) => bone(`t_${k}`));
+    // which rotation direction closes the fingers toward the palm (-Z) depends on the exported bone frames
+    const tip = this.fingers[1][2];
+    this.group.updateMatrixWorld(true);
+    const z0 = tip.getWorldPosition(new THREE.Vector3()).z;
+    this.bend(this.fingers[1][0], 0.5);
+    this.group.updateMatrixWorld(true);
+    const z1 = tip.getWorldPosition(new THREE.Vector3()).z;
+    this.sign = z1 < z0 ? 1 : -1;
+    this.bend(this.fingers[1][0], 0);
+  }
+  private bend(b: THREE.Bone, a: number) {
+    b.quaternion.copy(this.rest.get(b)!).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), a * this.sign));
+  }
+  setCurl(c: number) {
+    this.curl = c;
+    for (let f = 0; f < 4; f++) {
+      const cc = c * (0.88 + f * 0.06);
+      this.bend(this.fingers[f][0], cc * 1.3); this.bend(this.fingers[f][1], cc * 1.55); this.bend(this.fingers[f][2], cc * 1.05);
+    }
+    this.bend(this.thumb[0], 0.25 + c * 0.45); this.bend(this.thumb[1], c * 0.6); this.bend(this.thumb[2], c * 0.75);
+  }
+}
+
 // ---- shoe ----------------------------------------------------------------------------------
 function buildShoe(white: THREE.Material, red: THREE.Material, dark: THREE.Material, side: number): THREE.Group {
   const g = new THREE.Group(); // origin at ankle; +Z forward (toe), +Y up
@@ -218,7 +260,7 @@ function buildShoe(white: THREE.Material, red: THREE.Material, dark: THREE.Mater
   return g;
 }
 
-interface Arm { upper: THREE.Mesh; fore: THREE.Mesh; cuff: THREE.Mesh; wrist: THREE.Mesh; hand: Hand; elbow: THREE.Mesh; shoulderCap: THREE.Mesh;
+interface Arm { upper: THREE.Mesh; fore: THREE.Mesh; cuff: THREE.Mesh; wrist: THREE.Mesh; hand: HandLike; elbow: THREE.Mesh; shoulderCap: THREE.Mesh;
   pos: THREE.Vector3; vel: THREE.Vector3; side: number }
 interface Leg { thigh: THREE.Mesh; shin: THREE.Mesh; knee: THREE.Mesh; shoe: THREE.Group; side: number }
 
@@ -270,15 +312,17 @@ export class RunnerBody {
   static UPPER = 0.29; static FORE = 0.27;
   static THIGH = 0.44; static SHIN = 0.43;
 
-  constructor(m: BodyMaterials, firstPerson: boolean) {
+  constructor(m: BodyMaterials, firstPerson: boolean, assets: CharacterAssets | null = null) {
     this.firstPerson = firstPerson;
+    const matMap: Record<string, THREE.Material> = { skin: m.skin, glove: m.glove, pad: m.pad, nail: m.nail, accent: m.accent,
+      jacket: m.jacket, shoe_white: m.shoeWhite, shoe_mid: m.shoeWhite, shoe_red: m.accent, shoe_dark: m.dark };
     for (const side of [-1, 1]) {
-      const upper = new THREE.Mesh(limbGeo(RunnerBody.UPPER, 0.05, 0.042, 0.008, 0.9), m.jacket);
-      const fore = new THREE.Mesh(limbGeo(RunnerBody.FORE * 0.72, 0.043, 0.036, 0.004, 0.9), m.jacket);
+      const upper = new THREE.Mesh(assets ? assets.sleeveUpper : limbGeo(RunnerBody.UPPER, 0.05, 0.042, 0.008, 0.9), m.jacket);
+      const fore = new THREE.Mesh(assets ? assets.sleeveFore : limbGeo(RunnerBody.FORE * 0.72, 0.043, 0.036, 0.004, 0.9), m.jacket);
       const cuff = new THREE.Mesh(limbGeo(0.03, 0.039, 0.037, 0, 0.9), m.accent);
       const wrist = new THREE.Mesh(limbGeo(RunnerBody.FORE * 0.26, 0.031, 0.027, 0.002, 0.8), m.skin);
       const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.044, 12, 8), m.jacket);
-      const hand = new Hand(side, m.skin, m.glove, m.accent, m.nail, m.pad);
+      const hand: HandLike = assets ? new SculptedHand(side, assets.hand, matMap) : new Hand(side, m.skin, m.glove, m.accent, m.nail, m.pad);
       // seam stripe down the outside of the sleeve, watch on the left wrist
       for (const [limb, len, r] of [[upper, RunnerBody.UPPER, 0.049], [fore, RunnerBody.FORE * 0.72, 0.042]] as [THREE.Mesh, number, number][]) {
         const st = new THREE.Mesh(new THREE.BoxGeometry(0.008, len * 0.92, 0.004), m.accent);
@@ -306,7 +350,9 @@ export class RunnerBody {
       const thigh = new THREE.Mesh(limbGeo(RunnerBody.THIGH, 0.088, 0.062, 0.01, 0.92), m.pants);
       const shin = new THREE.Mesh(limbGeo(RunnerBody.SHIN, 0.06, 0.042, 0.012, 0.92), m.pants);
       const knee = new THREE.Mesh(new THREE.SphereGeometry(0.062, 12, 8), m.pants);
-      const shoe = buildShoe(m.shoeWhite, m.accent, m.dark, side);
+      let shoe: THREE.Group;
+      if (assets) { shoe = new THREE.Group(); const s2 = instantiate(assets.shoe, matMap); if (side < 0) s2.scale.x = -1; shoe.add(s2); }
+      else shoe = buildShoe(m.shoeWhite, m.accent, m.dark, side);
       for (const o of [thigh, shin, knee]) { o.castShadow = true; o.receiveShadow = true; }
       this.root.add(thigh, shin, knee, shoe);
       this.legs.push({ thigh, shin, knee, shoe, side });

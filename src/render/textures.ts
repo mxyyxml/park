@@ -32,7 +32,28 @@ function fbm(x: number, y: number, basePeriod: number, oct: number, seed: number
   return s / n;
 }
 
-export interface TexSet { map: THREE.Texture; normalMap: THREE.Texture; roughnessMap: THREE.Texture }
+export interface TexSet { map: THREE.Texture; normalMap: THREE.Texture; roughnessMap: THREE.Texture; aoMap?: THREE.Texture }
+
+/**
+ * Photoscanned CC0 texture sets from Poly Haven (fetched by tools/fetch_assets.py).
+ * `repeat` converts the game's 4 m world-UV tile to the scan's real-world size.
+ * Returns null if any file fails, so callers keep the procedural set.
+ */
+export async function loadScan(id: string, repeat: number, base = './assets/tex/'): Promise<TexSet | null> {
+  try {
+    const L = new THREE.TextureLoader();
+    const [map, normalMap, arm] = await Promise.all(['diff', 'nor', 'arm'].map((k) => L.loadAsync(`${base}${id}_${k}.jpg`)));
+    for (const t of [map, normalMap, arm]) {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); t.anisotropy = 8;
+    }
+    map.colorSpace = THREE.SRGBColorSpace;
+    // arm = ambient occlusion (R), roughness (G), metalness (B): three reads the matching channels
+    return { map, normalMap, roughnessMap: arm, aoMap: arm };
+  } catch (e) {
+    console.warn('scan texture unavailable, using procedural', id, e);
+    return null;
+  }
+}
 
 type Gen = (u: number, v: number, x: number, y: number) => { r: number; g: number; b: number; h: number; rough: number };
 

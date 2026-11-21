@@ -8,6 +8,8 @@ import { Dynamic } from '../world/Dynamic';
 import { emptyInput, InputFrame, PEvent, PlayerController, PState } from '../player/PlayerController';
 import { CameraRig } from '../player/CameraRig';
 import { makeBodyMaterials, RunnerBody } from '../player/Body';
+import { loadCharacterAssets } from '../player/assets';
+import { instanceModel, loadModel } from '../render/instanced';
 import { Input } from '../core/Input';
 import { AudioEngine } from '../audio/AudioEngine';
 import { buildTrials, calibrate, TrialDef } from './Trials';
@@ -93,15 +95,18 @@ export class Game {
     this.r = new Renderer(this.canvas, s.quality);
     this.ui.setLoading(0.12, 'Generating materials');
     await this.yieldUI();
-    this.mats = createMaterials();
+    this.mats = await createMaterials();
     this.ui.setLoading(0.35, 'Building the district');
     await this.yieldUI();
+    const aircon = await loadModel('./assets/models/aircon/aircon.json');
     this.builder = new WorldBuilder(true);
+    this.builder.aircon = !!aircon;
     this.city = buildCity(this.builder);
     this.ui.setLoading(0.55, 'Assembling geometry');
     await this.yieldUI();
     const wm = buildWorldMeshes(this.builder, this.mats);
     this.r.scene.add(wm.group);
+    if (aircon) this.r.scene.add(instanceModel(aircon, this.builder.anchors.filter((a) => a.type === 'aircon'), 1.02));
     (window as any).__stats = { draws: wm.drawCalls, tris: wm.triangles, colliders: this.builder.world.boxes.length };
     for (const l of this.builder.lights) {
       const pl = new THREE.PointLight(l.color, l.intensity, l.distance, 2);
@@ -115,12 +120,13 @@ export class Game {
     // player & bodies
     this.player = new PlayerController(this.builder.world);
     this.player.ziplines = this.builder.ziplines;
-    this.body = new RunnerBody(makeBodyMaterials(this.mats.fabric), true);
+    const charAssets = await loadCharacterAssets();
+    this.body = new RunnerBody(makeBodyMaterials(this.mats.fabric), true, charAssets);
     this.r.scene.add(this.body.root, this.body.armRoot);
-    this.ghostBody = new RunnerBody(makeBodyMaterials(null, true), false);
+    this.ghostBody = new RunnerBody(makeBodyMaterials(null, true), false, charAssets);
     this.ghostBody.setVisible(false);
     this.r.scene.add(this.ghostBody.root, this.ghostBody.armRoot);
-    this.showBody = new RunnerBody(makeBodyMaterials(this.mats.fabric), false);
+    this.showBody = new RunnerBody(makeBodyMaterials(this.mats.fabric), false, charAssets);
     this.showBody.setVisible(false);
     this.r.scene.add(this.showBody.root, this.showBody.armRoot);
 

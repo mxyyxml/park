@@ -11,6 +11,19 @@ npm run build      # type-check + production build into dist/
 
 Click to capture the mouse. Esc pauses. The game also supports a gamepad (standard mapping).
 
+## How to play
+
+**Goal:** run across the rooftops without falling. Speed is everything: the longer you sprint in a straight line, the faster you go and the further you jump. Falling to the street (or landing from too high without rolling) sends you back to your last checkpoint.
+
+1. Open the game and click **Free Run** to explore, or **Time Trials** to race a route.
+2. Click the game view so it captures the mouse. Press **Esc** to pause.
+3. Hold **Shift + W** to sprint and build speed. Press **Space** at a roof edge to jump the gap.
+4. **Space** is "up": it jumps, runs along a wall if you jump at it from the side, climbs a wall you run straight at, grabs and pulls up ledges, and vaults low obstacles.
+5. **Ctrl** (or **C**) is "down": slide under things at speed, and press it just before a big landing to **roll** and keep your speed.
+6. In time trials, follow the red beam and the marker to each checkpoint. Your best run becomes a red **ghost** to race next time. **R** restarts instantly.
+
+Tips: hit walls at a shallow angle to wall-run; red objects (pipes, ladders, beams, crates) are climbable routes; hold W while falling toward a ledge to grab it; on balance beams, steer with A/D to stay upright.
+
 ## Controls
 
 | Action | Keyboard / mouse | Gamepad |
@@ -97,6 +110,18 @@ Everything is synthesized at startup:
 - **Replays** of any run or PB, with cinematic chase, tracking and fixed cameras, played back at 0.25×, 1× or 2×. The main menu shows an attract mode: the autopilot runs the trials while cinematic cameras follow it.
 - Settings: quality, FOV, sensitivity, invert Y, camera motion, wall-jump assist, volume, HUD toggles. They're saved locally along with times, ghosts and shards.
 
+## Assets
+
+Sculpted character assets are built in Blender from `tools/blender/sculpt_assets.py` (run with the `bpy` module: `pip install bpy`), then converted for the web with `tools/embed_gltf.py`:
+
+- **hand**: skin-modifier fingers fused with a sculpted palm (voxel remesh + smoothing), knuckle bumps, joint creases, tendons and nails; fingerless glove pieces shrink-wrapped onto the surface; 16-bone rig (wrist, 3 per finger, 3 thumb) with distance-based skin weights. The game drives the finger bones from the grip system.
+- **sleeves**: tapered tubes with fabric folds bunched at the elbow and wrist and a ribbed cuff.
+- **shoe**: lofted upper with toe spring, heel collar, midsole, red outsole with cut tread, laces and eyelets.
+
+Photoscanned assets are from [Poly Haven](https://polyhaven.com) (CC0), fetched by `tools/fetch_assets.py`: textures concrete_wall_001/006/008, bicolour_gravel and asphalt_02, and the exterior_aircon_unit model (two per rooftop AC plinth). If any asset fails to load, the game falls back to its procedural version.
+
+`npm run build:page` produces the single-page build in `dist-artifact/` used for the shareable link; the files in `public/assets` are published next to it.
+
 ## How the levels are validated
 
 `src/game/Bot.ts` is an autopilot that drives the **real** controller using only stick and button inputs. `tests/trials.test.ts` runs it through every time trial and asserts it reaches every checkpoint without dying. The game uses the same bot run (cached) to calibrate medal times. Making this pass exposed and fixed real gameplay bugs, including:
@@ -116,4 +141,4 @@ Everything is synthesized at startup:
 
 ## Scope notes
 
-This is a code-only browser production. "Models" are procedural meshes (lathe, chamfered-box and IK-driven primitives) authored in code, not sculpted assets. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.
+The character's hands, sleeves and shoes are Blender-sculpted by script, not by an artist's hand; the head, torso and legs are still procedural meshes. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.

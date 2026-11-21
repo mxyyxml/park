@@ -45,6 +45,8 @@ export class WorldBuilder {
   lights: LightDef[] = [];
   anchors: Anchor[] = [];
   far = false;
+  /** use the scanned aircon model for AC units (set when the asset loaded) */
+  aircon = false;
 
   constructor(visual: boolean) { this.visual = visual; }
 

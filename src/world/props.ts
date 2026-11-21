@@ -9,6 +9,12 @@ export function acUnit(b: WorldBuilder, f: Frame, w = 1.8, d = 1.3, h = 1.1) {
   b.cbox(x0, y, z0, x1, y + h, z1, Surface.Metal);
   if (!b.visual) return;
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  if (b.aircon) {
+    // scanned condenser model instanced by the renderer: two units side by side on a rail plinth
+    box(b.g('metalDark', cx, cz), x0 + 0.05, y, z0 + 0.05, x1 - 0.05, y + 0.12, z1 - 0.05, { bevel: 0.02 });
+    for (const lx of [-w / 4, w / 4]) { const [ax, az] = f.p(lx, 0); b.anchors.push({ type: 'aircon', x: ax, y: y + 0.12, z: az, a: f.r }); }
+    return;
+  }
   const gm = b.g('metalPainted', cx, cz);
   gm.colCur = [0.92, 0.93, 0.94];
   // plinth rails

@@ -239,18 +239,22 @@ export interface MaterialLib {
   fabric: T.TexSet;
 }
 
-export function createMaterials(): MaterialLib {
+export async function createMaterials(): Promise<MaterialLib> {
   installFogChunks();
-  const concrete = T.concreteSet(1024, 0.4);
-  const concreteDark = T.concreteSet(512, 0, 1);
-  const concreteWarm = T.concreteSet(512, 1.0);
-  const gravel = T.gravelSet(1024);
+  const [sConcrete, sDark, sWarm, sGravel, sAsphalt] = await Promise.all([
+    T.loadScan('concrete_wall_001', 2), T.loadScan('concrete_wall_006', 2), T.loadScan('concrete_wall_008', 2),
+    T.loadScan('bicolour_gravel', 2), T.loadScan('asphalt_02', 10),
+  ]);
+  const concrete = sConcrete ?? T.concreteSet(1024, 0.4);
+  const concreteDark = sDark ?? T.concreteSet(512, 0, 1);
+  const concreteWarm = sWarm ?? T.concreteSet(512, 1.0);
+  const gravel = sGravel ?? T.gravelSet(1024);
   const roof = T.roofSet(1024);
   const metal = T.metalSet(256);
   const metalP = T.metalSet(256, true);
   const wood = T.woodSet(256);
   const grass = T.grassSet(256);
-  const asphalt = T.asphaltSet(512);
+  const asphalt = sAsphalt ?? T.asphaltSet(512);
   const tile = T.tileSet(256);
   const floorPolish = T.tileSet(256, true);
   const solar = T.solarSet(256);
@@ -258,7 +262,7 @@ export function createMaterials(): MaterialLib {
   const ads = T.adAtlas();
 
   const ts = (s: T.TexSet, extra: THREE.MeshStandardMaterialParameters = {}, ns = 1) => {
-    const m = std({ map: s.map, normalMap: s.normalMap, roughnessMap: s.roughnessMap, ...extra });
+    const m = std({ map: s.map, normalMap: s.normalMap, roughnessMap: s.roughnessMap, aoMap: s.aoMap ?? null, ...extra });
     m.normalScale.set(ns, ns);
     return addDetail(m, 4.7, 0.55);
   };
@@ -298,7 +302,10 @@ export function createMaterials(): MaterialLib {
     stripe: std({ color: 0xf0efe8, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   };
   // gravel & roofs: concrete-ish base
+  // the scanned concrete is mid-grey; lift it toward the district's white architectural concrete
   (mats.concrete as THREE.MeshStandardMaterial).color.set(0xf4f3f0);
+  if (sConcrete) (mats.concrete as THREE.MeshStandardMaterial).color.setRGB(1.45, 1.44, 1.42);
+  if (sWarm) (mats.concreteWarm as THREE.MeshStandardMaterial).color.setRGB(1.25, 1.22, 1.18);
   const all = Object.values(mats);
   return {
     get: (k) => mats[k],
