@@ -5,3 +5,4 @@ test-results
 tests/debug
 dist-artifact
 dist-offline
+dist-package
