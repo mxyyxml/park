@@ -25,8 +25,10 @@ export class Input {
   invertY = false;
   gamepadSens = 3.2;
   locked = false;
-  /** set when the browser refuses pointer lock: look follows the free mouse instead */
+  /** touch, or pointer lock refused even on repeated clicks (e.g. a sandboxed frame): look follows the free mouse */
   fallbackLook = false;
+  private lockFails = 0;
+  private lockFromClick = false;
   get active() { return this.locked || this.fallbackLook; }
   mouseButtons = 0;
   private gpPrev: boolean[] = [];
@@ -45,8 +47,10 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
-    document.addEventListener('pointerlockchange', () => { this.locked = document.pointerLockElement === this.el; });
-    document.addEventListener('pointerlockerror', () => { this.fallbackLook = true; });
+    document.addEventListener('pointerlockchange', () => { this.locked = document.pointerLockElement === this.el; if (this.locked) this.lockFails = 0; });
+    // a refusal is usually temporary (re-lock within ~1 s of Esc, or a request not made by a click):
+    // the "Click to resume" prompt stays up. Only clicks that keep failing mean lock is unavailable.
+    document.addEventListener('pointerlockerror', () => { if (this.lockFromClick && ++this.lockFails >= 2) this.fallbackLook = true; });
     document.addEventListener('mousemove', (e) => {
       if (!this.active || !this.enabled) return;
       this.lookDX += e.movementX; this.lookDY += e.movementY;
@@ -108,13 +112,14 @@ export class Input {
     root.addEventListener('touchend', end); root.addEventListener('touchcancel', end);
   }
 
-  lock() {
+  lock(fromClick = false) {
     if (this.locked || this.fallbackLook) return;
     if (!this.el.requestPointerLock) { this.fallbackLook = true; return; }
+    this.lockFromClick = fromClick;
     try {
       const r = this.el.requestPointerLock() as unknown as Promise<void> | undefined;
-      r?.catch?.(() => { this.fallbackLook = true; });
-    } catch { this.fallbackLook = true; }
+      r?.catch?.(() => {}); // handled by the pointerlockerror listener
+    } catch { /* same */ }
   }
   unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
 

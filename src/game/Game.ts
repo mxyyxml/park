@@ -204,9 +204,9 @@ export class Game {
     });
     this.canvas.addEventListener('click', () => {
       this.audio.init();
-      if ((this.mode === 'free' || this.mode === 'trial') && !this.paused) this.input.lock();
+      if ((this.mode === 'free' || this.mode === 'trial') && !this.paused) this.input.lock(true);
     });
-    this.ui.prompt.addEventListener('click', () => { this.input.lock(); });
+    this.ui.prompt.addEventListener('click', () => { this.input.lock(true); });
     // touch devices: on-screen controls, and no pointer lock needed
     const touchDevice = isTouchDevice();
     if (touchDevice) {
