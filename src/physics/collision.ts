@@ -237,8 +237,10 @@ export class CollisionWorld {
           const downPen = head - b.minY;
           // choose resolution
           let pen = hPen, k = 0;
-          const stepOk = upPen <= stepHeight && (vel.y <= 2.0 || upPen < 0.3);
-          if (stepOk || upPen < hPen) { pen = upPen; k = 1; }
+          // barriers (railings, posts, poles) are never stood on: they only push sideways
+          const barrier = (b.flags & F.NO_GRAB) !== 0 && (b.maxX - b.minX < 0.7 || b.maxZ - b.minZ < 0.7);
+          const stepOk = !barrier && upPen <= stepHeight && (vel.y <= 2.0 || upPen < 0.3);
+          if (!barrier && (stepOk || upPen < hPen)) { pen = upPen; k = 1; }
           if (downPen < pen && vel.y > -1 && !stepOk) { pen = downPen; k = 2; }
           // prioritise resolving by the smallest needed correction among boxes, but steps last
           const score = k === 1 && upPen > hPen ? pen + 10 : pen;

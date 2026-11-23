@@ -36,3 +36,10 @@ export function instanceModel(model: THREE.Object3D, anchors: Anchor[], size: nu
   });
   return group;
 }
+
+/** Keep only the model's top-level parts whose names pass `keep` (models often ship several variants side by side). */
+export function pickParts(model: THREE.Object3D, keep: (name: string) => boolean): THREE.Object3D {
+  const g = new THREE.Group();
+  for (const c of [...model.children]) if (keep(c.name)) g.add(c.clone());
+  return g;
+}

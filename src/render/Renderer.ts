@@ -60,6 +60,43 @@ void main(){
 }`,
 };
 
+/**
+ * Sun shafts: screen-space light scattering. Bright pixels near the sun are streaked toward the
+ * viewer along rays from the sun's screen position; anything darker (buildings in front of the
+ * sun, cloud cores) blocks them.
+ */
+const ShaftShader = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    uSun: { value: new THREE.Vector2(0.5, 0.5) },
+    uVisible: { value: 0 },
+    uAspect: { value: 1 },
+    uColor: { value: new THREE.Color(1.0, 0.93, 0.8) },
+  },
+  vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: /* glsl */`
+uniform sampler2D tDiffuse; uniform vec2 uSun; uniform float uVisible; uniform float uAspect; uniform vec3 uColor;
+varying vec2 vUv;
+void main(){
+  vec3 col = texture2D(tDiffuse, vUv).rgb;
+  if (uVisible > 0.001) {
+    vec2 delta = (vUv - uSun) * (0.9 / 32.0);
+    vec2 uv = vUv; float illum = 1.0; float acc = 0.0;
+    for (int i = 0; i < 32; i++) {
+      uv -= delta;
+      vec3 s = texture2D(tDiffuse, uv).rgb;
+      float l = max(dot(s, vec3(0.2126, 0.7152, 0.0722)) - 0.82, 0.0);
+      acc += l * illum;
+      illum *= 0.955;
+    }
+    vec2 d = (vUv - uSun) * vec2(uAspect, 1.0);
+    float near = 1.0 - smoothstep(0.0, 0.9, length(d));
+    col += uColor * acc * 0.06 * near * uVisible;
+  }
+  gl_FragColor = vec4(col, 1.0);
+}`,
+};
+
 export class Renderer {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
@@ -71,6 +108,7 @@ export class Renderer {
   sunDir = new THREE.Vector3();
   quality: Quality = 'high';
   grade!: ShaderPass;
+  shafts!: ShaderPass;
   private gtao: GTAOPass | null = null;
   private bloom: UnrealBloomPass | null = null;
   private smaa: SMAAPass | null = null;
@@ -91,7 +129,7 @@ export class Renderer {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.info.autoReset = true;
 
-    this.camera = new THREE.PerspectiveCamera(85, 1, 0.04, 4000);
+    this.camera = new THREE.PerspectiveCamera(85, 1, 0.05, 12000);
     this.scene.add(this.camera);
 
     // Sky
@@ -131,6 +169,7 @@ export class Renderer {
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.grade = new ShaderPass(GradeShader);
+    this.shafts = new ShaderPass(ShaftShader);
   }
 
   applyQuality(q: Quality) {
@@ -158,6 +197,7 @@ export class Renderer {
       this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.55, 0.92);
       this.composer.addPass(this.bloom);
     }
+    if (q !== 'low') this.composer.addPass(this.shafts);
     this.composer.addPass(this.grade);
     this.composer.addPass(new OutputPass());
     if (q !== 'low') {
@@ -235,6 +275,43 @@ export class Renderer {
     pmrem.dispose();
   }
 
+  // ---- photographic sky ----------------------------------------------------------------------
+  private photoSky = false;
+  private skySun = new THREE.Vector3();
+  private skyAngle = 0;
+
+  /**
+   * Use an HDRI-derived panorama as the sky. The sun light, its shadows and the fog's sun glow
+   * follow the sun found in the image; fog takes the image's horizon colour.
+   */
+  setPhotoSky(tex: THREE.Texture, sun: number[], horizon: number[]) {
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background = tex;
+    this.scene.backgroundIntensity = 1.12;
+    this.sky.visible = false;
+    this.skySun.set(sun[0], sun[1], sun[2]).normalize();
+    (this.scene.fog as THREE.Fog).color.setRGB(horizon[0], horizon[1], horizon[2], THREE.SRGBColorSpace);
+    this.hemi.color.setRGB(horizon[0], horizon[1], horizon[2], THREE.SRGBColorSpace);
+    this.photoSky = true;
+    this.setSunDir(this.skySun);
+  }
+
+  private setSunDir(d: THREE.Vector3) {
+    this.sunDir.copy(d);
+    fogUniforms.fogSunDir.value.copy(d);
+    this.sun.position.copy(d).multiplyScalar(100);
+    this.csm?.lightDirection.copy(d).negate();
+  }
+
+  /** clouds drift: the panorama turns very slowly and the sun (and every shadow) turns with it */
+  private driftSky(dt: number) {
+    if (!this.photoSky) return;
+    this.skyAngle += dt * 0.0006;
+    this.scene.backgroundRotation.y = this.skyAngle;
+    this.setSunDir(this.skySun.clone().applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.skyAngle));
+  }
+
   /** update the shadow cascades for the current camera */
   updateSun(_focus: THREE.Vector3) {
     if (!this.csm) return;
@@ -247,6 +324,16 @@ export class Renderer {
   }
 
   render(dt: number, speed: number) {
+    this.driftSky(dt);
+    // sun position on screen for the shafts pass; fades when the sun leaves the view
+    const cam = this.camera;
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const sp = cam.position.clone().addScaledVector(this.sunDir, 1000).project(cam);
+    const facing = fwd.dot(this.sunDir);
+    const u = this.shafts.uniforms;
+    u.uSun.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
+    u.uVisible.value = facing > 0 ? THREE.MathUtils.smoothstep(facing, 0.2, 0.7) * (1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(sp.x), Math.abs(sp.y)), 1.0, 1.6)) : 0;
+    u.uAspect.value = cam.aspect;
     this.grade.uniforms.uTime.value += dt;
     this.grade.uniforms.uSpeed.value = speed;
     this.composer.render(dt);

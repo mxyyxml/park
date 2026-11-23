@@ -617,6 +617,15 @@ function buildParapets(b: WorldBuilder, bl: Building, rng: Rng, doors: { axis: '
   });
 }
 
+function sphereCap(b: WorldBuilder, x: number, y: number, z: number) {
+  if (b.visual) cylinder(b.g('metal', x, z), x, y, z, 0.08, 0.12, 'y', 10);
+}
+
+function pottedPlant(b: WorldBuilder, x: number, y: number, z: number, rot: number) {
+  b.cbox(x - 0.3, y, z - 0.3, x + 0.3, y + 0.7, z + 0.3, Surface.Concrete);
+  b.anchors.push({ type: 'plant', x, y, z, a: rot });
+}
+
 function nearLane(lanes: { x0: number; z0: number; x1: number; z1: number }[], minX: number, minZ: number, maxX: number, maxZ: number, w = 1.6) {
   for (const l of lanes) {
     const L = Math.hypot(l.x1 - l.x0, l.z1 - l.z0);
@@ -663,12 +672,21 @@ function roofProps(b: WorldBuilder, bl: Building, rng: Rng, lanes: { x0: number;
     for (let i = 0; i < n / 2; i++) tryPlace(1.8, 0.6, false, (x, z) => P.bench(b, new Frame(x, y, z, rng.pick([0, 2]))));
     // wooden deck area
     tryPlace(6, 5, false, (x, z) => { b.vbox('wood', x - 3, y, z - 2.5, x + 3, y + 0.06, z + 2.5); });
+    // potted plants (scanned model, instanced by the renderer)
+    for (let i = 0; i < n + 2; i++) tryPlace(0.9, 0.9, false, (x, z) => pottedPlant(b, x, y, z, rng.int(0, 3)));
     return;
   }
   if (bl.kind === 'industrial') {
     tryPlace(3.2, 3.2, true, (x, z) => P.coolingFan(b, x, y, z, 1.4));
     tryPlace(3, 3, true, (x, z) => P.waterTank(b, x, y, z, 1.25, 2.6));
     tryPlace(1.2, 1.2, true, (x, z) => P.chimney(b, x, y, z, 4 + R() * 4, 0.45));
+    // barrel clusters (scanned model): vaultable 0.9 m drums
+    for (let i = 0; i < 2; i++) tryPlace(2.0, 2.0, false, (x, z) => {
+      for (const [ox, oz] of [[-0.35, -0.35], [0.35, -0.3], [-0.3, 0.35]]) {
+        b.cbox(x + ox - 0.3, y, z + oz - 0.3, x + ox + 0.3, y + 0.9, z + oz + 0.3, Surface.Metal);
+        b.anchors.push({ type: 'barrel', x: x + ox, y, z: z + oz, a: rng.int(0, 3) });
+      }
+    });
     for (let i = 0; i < 2; i++) {
       const alongX = R() < 0.5;
       const L = 5 + R() * 6;
@@ -698,6 +716,17 @@ function roofProps(b: WorldBuilder, bl: Building, rng: Rng, lanes: { x0: number;
   if (R() < 0.3) tryPlace(3, 3, true, (x, z) => P.waterTank(b, x, y, z, 1.2, 2.4));
   if (R() < 0.35) tryPlace(1.5, 1.5, true, (x, z) => P.antenna(b, x, y, z, 4 + R() * 6));
   if (R() < 0.25) tryPlace(1.4, 1.4, true, (x, z) => P.dish(b, x, y, z, 0.7));
+  if (R() < 0.3) tryPlace(1.0, 1.0, true, (x, z) => {
+    // flagpole: the cloth is animated by the renderer (Dynamic.ts)
+    const ph = 7 + R() * 3;
+    b.cbox(x - 0.06, y, z - 0.06, x + 0.06, y + ph, z + 0.06, Surface.Metal, F.NO_GRAB);
+    if (b.visual) {
+      cylinder(b.g('metal', x, z), x, y + ph / 2, z, 0.05, ph, 'y', 10, true, 0.035);
+      sphereCap(b, x, y + ph + 0.06, z);
+      box(b.g('concreteDark', x, z), x - 0.35, y, z - 0.35, x + 0.35, y + 0.25, z + 0.35, { bevel: 0.04 });
+    }
+    b.anchors.push({ type: 'flag', x, y: y + ph - 0.15, z, a: R() * 3 });
+  });
   if (R() < 0.2 && area > 350) tryPlace(10, 10, false, (x, z) => P.helipad(b, x, y + 0.02, z, 4.6));
   if (R() < 0.25) {
     const alongX = R() < 0.5, L = 5 + R() * 5;
@@ -868,6 +897,10 @@ function buildAtrium(b: WorldBuilder, bl: Building, floorY: number, rng: Rng, ne
   // slide-under duct
   const dz = minZ + D * 0.3;
   b.solid('metal', minX + W * 0.45, floorY + 1.15, dz - 0.5, maxX - 1, ceil, dz + 0.5, Surface.Metal, F.NO_GRAB);
+  // potted plants along the glass
+  for (let x = minX + 3; x < maxX - 3; x += 9) {
+    for (const z of [minZ + 0.9, maxZ - 0.9]) if (!b.world.overlapCylinder(x, floorY + 0.05, z, 0.5, 1.5)) pottedPlant(b, x, floorY, z, 0);
+  }
   // ceiling lights + point lights
   for (let x = minX + 4; x < maxX - 2; x += 6) for (let z = minZ + 4; z < maxZ - 2; z += 6) {
     b.vbox('lamp', x - 1.2, ceil - 0.06, z - 0.2, x + 1.2, ceil - 0.02, z + 0.2);
@@ -989,13 +1022,27 @@ function buildStreets(b: WorldBuilder, rng: Rng) {
   if (!b.visual) return;
   // near streets in detail
   b.far = true;
-  b.vbox('asphalt', -1500, -0.2, -1500, 1500, 0, 1500, { uvScale: 0.05 });
+  // street plane: a disc that meets the landscape ring (Terrain.ts) at its flat apron
+  {
+    const g = b.g('asphalt', 0, 0), R0 = 1060, N = 128;
+    const c = g.vert(0, 0, 0, 0, 1, 0, 0, 0);
+    const ring: number[] = [];
+    for (let i = 0; i <= N; i++) { const a = i / N * Math.PI * 2, x = Math.cos(a) * R0, z = Math.sin(a) * R0; ring.push(g.vert(x, 0, z, 0, 1, 0, x * 0.05, z * 0.05)); }
+    for (let i = 0; i < N; i++) g.tri(c, ring[i + 1], ring[i]);
+  }
   b.far = false;
   const ext = 2;
   for (let j = -ext; j < ROWS + ext; j++) for (let i = -ext; i < COLS + ext; i++) {
     const r = blockRect(i, j);
     // sidewalk ring
     b.vbox('sidewalk', r.minX - 3.2, 0, r.minZ - 3.2, r.maxX + 3.2, 0.15, r.maxZ + 3.2, { bevel: 0.05, uvScale: 0.5 });
+    // street furniture (scanned models): hydrants at the corners, bins along the kerb, barrier runs
+    b.anchors.push({ type: 'hydrant', x: r.minX - 2.2, y: 0.15, z: r.minZ - 2.2, a: 0 }, { type: 'hydrant', x: r.maxX + 2.2, y: 0.15, z: r.maxZ + 2.2, a: 2 });
+    for (let k = 0; k < 3; k++) b.anchors.push({ type: 'trashcan', x: r.minX + 8 + rng.next() * (BLOCK - 16), y: 0.15, z: r.maxZ + 2.4, a: rng.int(0, 3) });
+    if (rng.next() < 0.5) {
+      const z0 = r.minZ - 2.4, x0 = r.minX + 6 + rng.next() * (BLOCK - 20);
+      for (let k = 0; k < 4; k++) b.anchors.push({ type: 'barrier', x: x0 + k * 1.75, y: 0.15, z: z0, a: 0 });
+    }
     // street lights along sidewalks
     for (let x = r.minX; x <= r.maxX; x += 15) {
       P.lampPost(b, x, 0.15, r.minZ - 2.6, 7, 0, -1);

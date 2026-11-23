@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import type { Anchor } from './builder';
 import type { CityInfo } from './city';
 import type { AudioEngine } from '../audio/AudioEngine';
-import { withFog } from '../render/materials';
+import { withFog, windUniforms } from '../render/materials';
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
@@ -47,8 +47,10 @@ export class Dynamic {
   private fanAnchors: Anchor[] = [];
   private beaconMat: THREE.MeshStandardMaterial;
   private screenMat: THREE.MeshStandardMaterial;
-  private clouds: THREE.Mesh;
   private t = 0;
+  private flagU = { uTime: { value: 0 } };
+  private dust!: THREE.Points;
+  private dustVel: Float32Array = new Float32Array(0);
   private screenT = 0;
 
   constructor(city: CityInfo, anchors: Anchor[], beaconMat: THREE.Material, screenMat: THREE.MeshStandardMaterial, private audio: AudioEngine) {
@@ -160,34 +162,74 @@ export class Dynamic {
       this.group.add(this.fans);
       for (const a of this.fanAnchors) audio.addEmitter('humLoop', a.x, a.y, a.z, 0.08, 3);
     }
+    this.buildFlags(anchors.filter((a) => a.type === 'flag'));
+    this.buildDust();
 
-    // ---- clouds (procedural shader dome)
-    const cloudMat = new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      uniforms: { uTime: { value: 0 }, uSun: { value: new THREE.Vector3(0.4, 0.6, -0.5) } },
-      vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
-      fragmentShader: `uniform float uTime; varying vec3 vW;
-        float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
-        float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); return mix(mix(h(i),h(i+vec2(1,0)),f.x), mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x), f.y); }
-        float fbm(vec2 p){ float s=0.0, a=0.5; for(int i=0;i<5;i++){ s+=n(p)*a; p*=2.03; a*=0.5; } return s; }
-        void main(){
-          vec2 p = vW.xz * 0.0009 + vec2(uTime*0.004, uTime*0.002);
-          float c = fbm(p);
-          c = smoothstep(0.52, 0.78, c);
-          float edge = 1.0 - smoothstep(2500.0, 5200.0, length(vW.xz));
-          vec3 col = mix(vec3(0.82,0.86,0.92), vec3(1.0), smoothstep(0.0, 1.0, c));
-          gl_FragColor = vec4(col, c * 0.75 * edge);
-        }`,
-    });
-    this.clouds = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000), cloudMat);
-    this.clouds.rotation.x = -Math.PI / 2; this.clouds.position.y = 650;
-    this.clouds.renderOrder = -1;
-    this.group.add(this.clouds);
+  }
+
+  /** flags on rooftop poles: cloth waving in the wind (vertex shader), shadow-casting */
+  private buildFlags(anchors: Anchor[]) {
+    const tex = (() => {
+      const c = document.createElement('canvas'); c.width = 256; c.height = 160;
+      const g = c.getContext('2d')!;
+      g.fillStyle = '#f2f2f0'; g.fillRect(0, 0, 256, 160);
+      g.fillStyle = '#c8161e'; g.fillRect(0, 0, 256, 54); g.fillRect(0, 106, 256, 54);
+      g.fillStyle = '#151515'; g.beginPath(); g.arc(128, 80, 18, 0, Math.PI * 2); g.fill();
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+    })();
+    const mat = withFog(new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness: 0.85 }));
+    const prev = mat.onBeforeCompile;
+    mat.onBeforeCompile = (sh, r) => {
+      prev.call(mat, sh, r);
+      Object.assign(sh.uniforms, this.flagU);
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+float fx = uv.x; // 0 at the pole, 1 at the free edge
+float wave = sin(fx * 7.0 - uTime * 6.0 + position.y * 2.0) * 0.18 + sin(fx * 13.0 - uTime * 9.5) * 0.05;
+transformed.z += wave * fx;
+transformed.y -= fx * fx * 0.12;`);
+    };
+    for (const a of anchors) {
+      const geo = new THREE.PlaneGeometry(1.8, 1.1, 24, 10);
+      geo.translate(0.9, -0.55, 0);
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(a.x, a.y, a.z);
+      m.rotation.y = a.a ?? 0;
+      m.castShadow = true; m.receiveShadow = true;
+      this.group.add(m);
+    }
+  }
+
+  /** wind-borne dust and grit drifting past the runner; denser with height and speed */
+  private buildDust() {
+    const n = 220;
+    const geo = new THREE.BufferGeometry();
+    const p = new Float32Array(n * 3);
+    for (let i = 0; i < n * 3; i++) p[i] = (Math.random() - 0.5) * 40;
+    geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
+    this.dustVel = new Float32Array(n).map(() => 0.6 + Math.random() * 0.8);
+    this.dust = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xd9d2c4, size: 0.02, transparent: true, opacity: 0.3, depthWrite: false, sizeAttenuation: true }));
+    this.dust.frustumCulled = false;
+    this.group.add(this.dust);
   }
 
   update(dt: number, player: THREE.Vector3) {
     this.t += dt;
     const t = this.t;
+    this.flagU.uTime.value = t;
+    windUniforms.uWindTime.value = t;
+    // dust: drift with the wind, wrap around the player
+    const dpos = this.dust.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const wx = 1.6 + Math.sin(t * 0.2) * 0.8, wz = 0.7;
+    for (let i = 0; i < this.dustVel.length; i++) {
+      let x = dpos.getX(i) + wx * this.dustVel[i] * dt, y = dpos.getY(i) + Math.sin(t * 1.3 + i) * 0.1 * dt, z = dpos.getZ(i) + wz * this.dustVel[i] * dt;
+      if (x - player.x > 20) x -= 40; if (x - player.x < -20) x += 40;
+      if (z - player.z > 20) z -= 40; if (z - player.z < -20) z += 40;
+      if (y - player.y > 8) y -= 14; if (y - player.y < -6) y += 14;
+      dpos.setXYZ(i, x, y, z);
+    }
+    dpos.needsUpdate = true;
+    (this.dust.material as THREE.PointsMaterial).opacity = 0.1 + Math.min(0.15, Math.max(0, player.y - 15) / 120);
     // drones
     for (const d of this.drones) {
       const a = t * d.sp + d.ph;
@@ -286,7 +328,5 @@ export class Dynamic {
       if (m.offset.x < 0.01) m.offset.y = (m.offset.y + 0.25) % 1;
       if (this.screenMat.emissiveMap) this.screenMat.emissiveMap.offset.copy(m.offset);
     }
-    (this.clouds.material as THREE.ShaderMaterial).uniforms.uTime.value = t;
-    this.clouds.position.x = player.x; this.clouds.position.z = player.z;
   }
 }

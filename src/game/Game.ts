@@ -9,7 +9,8 @@ import { emptyInput, InputFrame, PEvent, PlayerController, PState } from '../pla
 import { CameraRig } from '../player/CameraRig';
 import { makeBodyMaterials, RunnerBody } from '../player/Body';
 import { loadCharacterAssets } from '../player/assets';
-import { instanceModel, loadModel } from '../render/instanced';
+import { instanceModel, loadModel, pickParts } from '../render/instanced';
+import { buildTerrain } from '../world/Terrain';
 import { Input } from '../core/Input';
 import { AudioEngine } from '../audio/AudioEngine';
 import { buildTrials, calibrate, TrialDef } from './Trials';
@@ -22,7 +23,7 @@ const DT = 1 / 120;
 /** primary input is a finger (phones/tablets); touchscreen laptops with a mouse keep desktop controls */
 function isTouchDevice() { return navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches; }
 function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
-const CALIB_VERSION = 5;
+const CALIB_VERSION = 6;
 
 type Mode = 'loading' | 'attract' | 'free' | 'trial' | 'replay';
 
@@ -107,6 +108,26 @@ export class Game {
     const wm = buildWorldMeshes(this.builder, this.mats);
     this.r.scene.add(wm.group);
     if (aircon) this.r.scene.add(instanceModel(aircon, this.builder.anchors.filter((a) => a.type === 'aircon'), 1.02));
+    // sourced props (Poly Haven, decimated for the game): one instanced draw per part
+    const props: [string, number, ((n: string) => boolean) | null][] = [
+      ['barrel', 0.9, null], ['plant', 0.75, null], ['barrier', 0.82, null],
+      ['hydrant', 0.78, (n) => !n.includes('aged')],
+      ['trashcan', 0.9, (n) => !n.includes('rust') && !n.includes('lid')],
+    ];
+    await Promise.all(props.map(async ([name, height, keep]) => {
+      const m = await loadModel(`./assets/models/${name}.json`);
+      const anchors = this.builder.anchors.filter((a) => a.type === name);
+      if (m && anchors.length) this.r.scene.add(instanceModel(keep ? pickParts(m, keep) : m, anchors, height));
+    }));
+    // landscape and sea around the city, and the photographic sky
+    this.r.scene.add(buildTerrain(this.mats.terrain));
+    try {
+      const [skyTex, skyMeta] = await Promise.all([
+        new THREE.TextureLoader().loadAsync('./assets/sky/sky.jpg'),
+        new THREE.FileLoader().loadAsync('./assets/sky/sky.json').then((t) => JSON.parse(t as string)),
+      ]);
+      this.r.setPhotoSky(skyTex, skyMeta.sun, skyMeta.horizon);
+    } catch (e) { console.warn('photo sky unavailable, keeping the procedural sky', e); }
     (window as any).__stats = { draws: wm.drawCalls, tris: wm.triangles, colliders: this.builder.world.boxes.length };
     for (const l of this.builder.lights) {
       const pl = new THREE.PointLight(l.color, l.intensity, l.distance, 2);

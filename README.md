@@ -84,13 +84,17 @@ Collision is a vertical cylinder against axis-aligned boxes in a spatial hash, w
   - **a rooftop garden** block, **industrial** blocks, and a **glass campus**.
 - Rooftop props (`props.ts`): AC units with fan grilles and louvres, vent stacks, stair housings with doors and lamps, water tanks on legs, skylights, solar arrays, duct runs, pipe racks, antennas with guy wires and beacons, satellite dishes, planters and trees, benches, cooling fans, chimneys and helipads.
 - Beyond the district, a skyline of hundreds of towers with setbacks and a downtown cluster, streets with sidewalks, lamps and trees, and an elevated maglev viaduct.
-- `Dynamic.ts`: drones, a passing maglev train, street traffic, bird flocks that scatter when you approach, steam vents, spinning fans, blinking beacons, cycling ad screens, and drifting clouds.
+- Street furniture from photoscans: fire hydrants, trash cans, concrete road barriers, barrel clusters on industrial roofs and potted plants in the garden and atrium. Brick facades mix in with concrete ones.
+- `Terrain.ts`: a sculpted landscape around the city. Ridged-noise mountain ranges rise to the north-west with snow above ~800 m, rolling hills sit in between, and the south-east falls through a beach to an animated sea. It blends aerial grass, rock and sand scans by slope and height. It is scenery only, outside the playable district.
+- `Dynamic.ts`: drones, a passing maglev train, street traffic, bird flocks that scatter when you approach, steam vents, spinning fans, blinking beacons, cycling ad screens, waving rooftop flags, wind-swayed foliage and drifting dust.
 
 ### Rendering (`src/render/`)
 - PBR materials with procedural albedo, normal and roughness maps. Textures include formwork concrete with tie holes and rain streaks, gravel, roofing membrane, brushed metal, wood, grass, asphalt, tiles, solar cells, cloth weave, and an ad atlas.
 - A custom **facade shader** has four architectural styles: curtain wall, ribbon windows, punched windows, and fins. Its **interior-mapped rooms** show parallax floors, ceilings, walls, furniture bands and lamp-lit offices behind reflective glass. It antialiases by screen-space footprint.
 - Lighting:
-  - atmospheric sky and sun;
+  - a photographed HDR sky (baked to a 4K panorama by `tools/bake_sky.py`) that slowly drifts, with the sun direction and fog colour taken from it;
+  - god rays (screen-space light shafts) on Medium and above;
+  - aerial perspective that fades distant mountains into the haze;
   - image-based lighting captured from the generated city;
   - a stable texel-snapped shadow map that follows the player;
   - height-dependent fog with sun in-scattering;
@@ -121,7 +125,12 @@ Sculpted character assets are built in Blender from `tools/blender/sculpt_assets
 - **body**: hooded jacket torso (zipper, chest and shoulder-blade planes, ribbed hem), belted pelvis, cargo-pocket thighs with knee wrinkles, shins with a ribbed ankle cuff, and a head (remeshed face, hair with grooves and tie) that also casts your shadow in first person.
 - **shoe**: lofted upper with toe spring, heel collar, midsole, red outsole with cut tread, laces and eyelets.
 
-Photoscanned assets are from [Poly Haven](https://polyhaven.com) (CC0), fetched by `tools/fetch_assets.py`: textures concrete_wall_001/006/008, bicolour_gravel and asphalt_02, and the exterior_aircon_unit model (two per rooftop AC plinth). If any asset fails to load, the game falls back to its procedural version.
+Photoscanned assets are from [Poly Haven](https://polyhaven.com), all CC0 (public domain, no attribution required; credited here anyway):
+- **textures** (fetched by `tools/fetch_assets.py`, 1K, shrunk where noted): concrete_wall_001/006/008, bicolour_gravel, asphalt_02, metal_plate, concrete_pavement, wood_planks_grey, leafy_grass, terrazzo_tiles, factory_brick; terrain aerials aerial_grass_rock, aerial_rocks_02, aerial_beach_01.
+- **models**: exterior_aircon_unit, plus Barrel_01, potted_plant_02, concrete_road_barrier, fire_hydrant and metal_trash_can. `tools/blender/optimize_models.py` decimates these to 1.4–3.5k triangles and 512 px textures.
+- **sky**: kloofendal_48d_partly_cloudy_puresky HDRI, via `tools/bake_sky.py`.
+
+If any asset fails to load, the game falls back to its procedural version.
 
 `npm run build:page` produces the single-page build in `dist-artifact/` used for the shareable link; the files in `public/assets` are published next to it.
 
@@ -144,7 +153,7 @@ Photoscanned assets are from [Poly Haven](https://polyhaven.com) (CC0), fetched 
 
 ## Scope notes
 
-The character is Blender-sculpted by script, not by an artist's hand. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.
+The character is Blender-sculpted by script, not by an artist's hand. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Clouds come from the sky photo (drifting slowly); they are not volumetric 3D clouds. The terrain is scenery and lies outside the playable district, which stays flat. Audio was not changed in the world overhaul. There's no occlusion culling or mesh LOD beyond decimating the imported models. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.
 
 ## Playing offline
 

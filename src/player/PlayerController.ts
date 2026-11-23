@@ -1126,7 +1126,8 @@ export class PlayerController {
       this.events.push({ type: 'handplant', surface });
       return true;
     }
-    // platform: step up onto it
+    // platform: step up onto it (never onto barriers: railings are not something to stand on)
+    if (top.box.flags & F.NO_GRAB) return false;
     const ux = hit.x - nx * (P.R + 0.2), uz = hit.z - nz * (P.R + 0.2);
     if (this.world.overlapCylinder(ux, top.y + 0.02, uz, P.R * 0.95, P.H_CROUCH)) return false;
     if (!fromJump && h > 1.0 && s < 4) return false;

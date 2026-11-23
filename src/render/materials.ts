@@ -16,8 +16,34 @@ export const fogUniforms = {
   fogSunDir: { value: new THREE.Vector3(0.4, 0.6, -0.5).normalize() },
   fogSunColor: { value: new THREE.Color('#ffe2b8') },
   fogHeightFalloff: { value: 0.012 },
-  fogDensity: { value: 0.0011 },
+  fogDensity: { value: 0.00042 },
 };
+
+/** shared wind clock for vegetation and flags (advanced by the game loop) */
+export const windUniforms = { uWindTime: { value: 0 } };
+
+/** Wind sway: gusting, height-weighted displacement on world-space merged foliage. */
+function withWind<M extends THREE.Material>(m: M, amount: number): M {
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);
+    Object.assign(sh.uniforms, windUniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWindTime;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
+  float gust = 0.6 + 0.4 * sin(uWindTime * 0.31 + wp.x * 0.013) * sin(uWindTime * 0.17 + wp.z * 0.011);
+  float ph = uWindTime * 1.9 + wp.x * 0.35 + wp.z * 0.27 + wp.y * 0.5;
+  transformed.x += sin(ph) * ${amount.toFixed(3)} * gust;
+  transformed.z += cos(ph * 0.83) * ${amount.toFixed(3)} * 0.6 * gust;
+  transformed.y += sin(ph * 1.7) * ${amount.toFixed(3)} * 0.25;
+}`);
+  };
+  const key = m.customProgramCacheKey.bind(m);
+  m.customProgramCacheKey = () => key() + '|wind';
+  return m;
+}
 
 export function installFogChunks() {
   THREE.ShaderChunk.fog_pars_fragment = /* glsl */`
@@ -45,6 +71,8 @@ export function installFogChunks() {
   } else {
     fogAmt = fogDensity * exp(-hfK * hfH0) * fogDist;
   }
+  // aerial perspective: beyond the city, distance alone thickens the haze (mountains go blue-grey)
+  fogAmt += max(fogDist - 900.0, 0.0) * 0.00016;
   float fogFactor = 1.0 - exp(-max(fogAmt, 0.0));
   float sunAmt = pow(max(dot(fogDir, fogSunDir), 0.0), 8.0);
   vec3 fogCol = mix(fogColor, fogSunColor, sunAmt * 0.6);
@@ -116,12 +144,14 @@ export function addDetail<M extends THREE.MeshStandardMaterial>(m: M, scale: num
  * interior-mapped rooms behind glass (parallax rooms with floor, ceiling, back wall, lamps).
  * Per-vertex attribute aFacade = (style, seed, floorHeight, cellWidth).
  */
-function facadeMaterial(concrete: T.TexSet): THREE.MeshStandardMaterial {
+function facadeMaterial(concrete: T.TexSet, brick: T.TexSet | null): THREE.MeshStandardMaterial {
   const m = std({ color: 0xffffff, roughness: 0.6, metalness: 0.0, map: concrete.map, normalMap: concrete.normalMap });
   m.normalScale.set(0.6, 0.6);
   const prev = m.onBeforeCompile;
   m.onBeforeCompile = (shader, r) => {
     prev.call(m, shader, r);
+    shader.uniforms.tBrick = { value: brick?.map ?? concrete.map };
+    shader.uniforms.uBrick = { value: brick ? 1 : 0 };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
 attribute vec4 aFacade;
@@ -137,6 +167,8 @@ vFWNormal = normalize(mat3(modelMatrix) * objectNormal);`);
 varying vec4 vFacade;
 varying vec3 vFWPos;
 varying vec3 vFWNormal;
+uniform sampler2D tBrick;
+uniform float uBrick;
 float fHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float fAA(float edge, float x, float w) { return smoothstep(edge - w, edge + w, x); }
 // interior mapping: returns room colour seen through a window cell
@@ -207,6 +239,8 @@ vec3 fRoomCol = fRoom(clamp(fF, 0.0, 1.0), fCell, fV, fT, fN, fCid, fSeed, fDeta
 float fFar = smoothstep(0.08, 0.3, max(fW.x, fW.y));
 vec3 fGlassTint = mix(vec3(0.20, 0.26, 0.31), vec3(0.24, 0.27, 0.29), fract(fSeed * 7.3));
 vec3 fFrameCol = fFrameDark > 0.5 ? mix(vec3(0.2, 0.22, 0.24), vec3(0.85), fSpandrel * 0.0) : diffuseColor.rgb * mix(0.95, 1.05, fract(fSeed * 3.7));
+// half of the punched-window (industrial) facades are factory brick instead of concrete
+if (uBrick > 0.5 && fStyle > 1.5 && fStyle < 2.5 && fract(fSeed * 0.37) < 0.5) fFrameCol = texture2D(tBrick, vMapUv * 1.6).rgb * 0.95;
 if (fFrameDark > 0.5) fFrameCol = mix(vec3(0.16, 0.18, 0.2), vec3(0.3, 0.32, 0.34), fSpandrel);
 vec3 fAlb = mix(fFrameCol, fGlassTint, fWin);
 float fWinAvg = fStyle < 0.5 ? 0.8 : fStyle < 1.5 ? 0.52 : fStyle < 2.5 ? 0.3 : 0.65;
@@ -237,26 +271,33 @@ export interface MaterialLib {
   all: THREE.Material[];
   screen: THREE.MeshStandardMaterial;
   fabric: T.TexSet;
+  terrain: { grass?: THREE.Texture; rock?: THREE.Texture; sand?: THREE.Texture };
 }
 
 export async function createMaterials(): Promise<MaterialLib> {
   installFogChunks();
-  const [sConcrete, sDark, sWarm, sGravel, sAsphalt] = await Promise.all([
+  const [sConcrete, sDark, sWarm, sGravel, sAsphalt, sMetal, sPave, sWood, sGrass, sTerrazzo, sBrick] = await Promise.all([
     T.loadScan('concrete_wall_001', 2), T.loadScan('concrete_wall_006', 2), T.loadScan('concrete_wall_008', 2),
     T.loadScan('bicolour_gravel', 2), T.loadScan('asphalt_02', 10),
+    T.loadScan('metal_plate', 2), T.loadScan('concrete_pavement', 1.5), T.loadScan('wood_planks_grey', 2),
+    T.loadScan('leafy_grass', 2), T.loadScan('terrazzo_tiles', 2), T.loadScan('factory_brick', 1),
   ]);
+  // landscape colour maps (seen from far away: colour only)
+  const L = new THREE.TextureLoader();
+  const terrainTex = await Promise.all(['aerial_grass_rock', 'aerial_rocks_02', 'aerial_beach_01'].map((id) => L.loadAsync(`./assets/tex/${id}_diff.jpg`)
+    .then((t) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t; }).catch(() => undefined)));
   const concrete = sConcrete ?? T.concreteSet(1024, 0.4);
   const concreteDark = sDark ?? T.concreteSet(512, 0, 1);
   const concreteWarm = sWarm ?? T.concreteSet(512, 1.0);
   const gravel = sGravel ?? T.gravelSet(1024);
   const roof = T.roofSet(1024);
-  const metal = T.metalSet(256);
+  const metal = sMetal ?? T.metalSet(256);
   const metalP = T.metalSet(256, true);
-  const wood = T.woodSet(256);
-  const grass = T.grassSet(256);
+  const wood = sWood ?? T.woodSet(256);
+  const grass = sGrass ?? T.grassSet(256);
   const asphalt = sAsphalt ?? T.asphaltSet(512);
   const tile = T.tileSet(256);
-  const floorPolish = T.tileSet(256, true);
+  const floorPolish = sTerrazzo ?? T.tileSet(256, true);
   const solar = T.solarSet(256);
   const fabric = T.fabricSet(256);
   const ads = T.adAtlas();
@@ -282,15 +323,15 @@ export async function createMaterials(): Promise<MaterialLib> {
     glassDark: std({ color: 0x1b2328, roughness: 0.05, metalness: 0.8 }),
     wood: ts(wood),
     grass: ts(grass),
-    foliage: std({ color: 0x5b8a3a, roughness: 0.8, vertexColors: true, flatShading: true }),
-    foliageDark: std({ color: 0x3e6b2c, roughness: 0.9, vertexColors: true, flatShading: true }),
+    foliage: withWind(std({ color: 0x5b8a3a, roughness: 0.8, vertexColors: true, flatShading: true }), 0.07),
+    foliageDark: withWind(std({ color: 0x3e6b2c, roughness: 0.9, vertexColors: true, flatShading: true }), 0.06),
     trunk: std({ color: 0x5a4636, roughness: 0.9 }),
-    facade: facadeMaterial(concrete),
+    facade: facadeMaterial(concrete, sBrick),
     lamp: std({ color: 0xffffff, emissive: 0xf4f8ff, emissiveIntensity: 3.0, roughness: 0.4 }),
     lampRed: std({ color: 0xff2020, emissive: 0xff1010, emissiveIntensity: 6.0 }),
     lampWarm: std({ color: 0xfff2dc, emissive: 0xffd9a0, emissiveIntensity: 3.0 }),
     asphalt: ts(asphalt),
-    sidewalk: ts(tile, { color: 0xd8d6d0 }),
+    sidewalk: ts(sPave ?? tile, { color: sPave ? 0xffffff : 0xd8d6d0 }),
     interiorFloor: ts(floorPolish, { color: 0xc8c6c2 }),
     interiorWall: std({ color: 0xf0efec, roughness: 0.85 }),
     rubber: std({ color: 0x2a2a2a, roughness: 0.95 }),
@@ -313,6 +354,7 @@ export async function createMaterials(): Promise<MaterialLib> {
     all,
     screen,
     fabric,
+    terrain: { grass: terrainTex[0], rock: terrainTex[1], sand: terrainTex[2] },
   };
 }
 
