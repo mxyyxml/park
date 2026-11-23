@@ -12,14 +12,4 @@ def from_glb(path):
 for p in glob.glob('public/assets/models/*.glb'):
     json.dump(from_glb(p), open(p[:-4] + '.json', 'w'))
     os.remove(p)
-g = 'public/assets/models/aircon/aircon.gltf'
-if os.path.exists(g):
-    j = json.load(open(g))
-    for buf in j['buffers']:
-        if not buf['uri'].startswith('data:'):
-            src = os.path.join(os.path.dirname(g), buf['uri'])
-            buf['uri'] = 'data:application/octet-stream;base64,' + base64.b64encode(open(src, 'rb').read()).decode()
-            os.remove(src)
-    json.dump(j, open('public/assets/models/aircon/aircon.json', 'w'))
-    os.remove(g)
 print('ok')

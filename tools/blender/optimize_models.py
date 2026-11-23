@@ -3,9 +3,9 @@ Download CC0 models from Poly Haven and make them game-ready (run with Blender's
 decimate each mesh to a triangle budget, shrink textures to 512 px and export a GLB into
 public/assets/models/<name>.glb. Then run tools/embed_gltf.py to produce the .json the game loads.
 
-    python3 tools/blender/optimize_models.py
+    python3 tools/blender/optimize_models.py [name ...]   # all models, or only the named ones
 """
-import json, os, urllib.request, tempfile
+import json, os, sys, urllib.request, tempfile
 import bpy
 
 # name -> (poly haven id, triangle budget)
@@ -17,6 +17,7 @@ MODELS = {
     'streetlamp': ('street_lamp_02', 2000),
     'seating': ('modular_street_seating', 2500),
     'plant': ('potted_plant_02', 3500),
+    'aircon': ('exterior_aircon_unit', 1600),  # placed ~250 times: keep it cheap
 }
 OUT = os.path.join(os.path.dirname(__file__), '..', '..', 'public', 'assets', 'models')
 TMP = os.path.join(tempfile.gettempdir(), 'ph_models')
@@ -41,9 +42,16 @@ def tris(ob):
     return sum(len(p.vertices) - 2 for p in ob.data.polygons)
 
 for name, (ph_id, budget) in MODELS.items():
+    if sys.argv[1:] and name not in sys.argv[1:]:
+        continue
     bpy.ops.wm.read_factory_settings(use_empty=True)
     src = download(ph_id)
     bpy.ops.import_scene.gltf(filepath=src)
+    if name == 'aircon':  # only the clean unit, centred (the rusted variant sits beside it)
+        for o in [o for o in bpy.context.scene.objects if 'rusted' in o.name]:
+            bpy.data.objects.remove(o)
+        for o in bpy.context.scene.objects:
+            o.location = (0, 0, 0)
     meshes = [o for o in bpy.context.scene.objects if o.type == 'MESH']
     total = sum(tris(o) for o in meshes)
     ratio = min(1.0, budget / max(total, 1))

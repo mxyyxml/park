@@ -157,4 +157,12 @@ The character is Blender-sculpted by script, not by an artist's hand. Lighting u
 
 ## Playing offline
 
-`npm run build:offline` writes `dist-offline/skyline-runner-offline.html` (about 10 MB). Code, styles and every texture and model are embedded in that one file, so it runs from your device with no network: open it in Chrome, Edge, Firefox or Safari. Progress (times, ghosts, shards) is saved in that browser.
+`npm run build:offline` writes `dist-offline/skyline-runner-offline.html` (about 16 MB). Code, styles and every texture and model are embedded in that one file, so it runs from your device with no network: open it in Chrome, Edge, Firefox or Safari. Progress (times, ghosts, shards) is saved in that browser.
+
+
+### On a school or low-end PC
+
+- Copy the offline file onto the PC (USB stick, or download it), then double-click it or drag it into a Chrome/Edge tab. It doesn't install anything and needs no admin rights or internet.
+- On first launch the game checks the graphics chip. On integrated graphics (Intel UHD/Iris, Chromebooks, phones) it starts on **Low**. If play stays under 24 fps for 4 s, it lowers the quality again and tells you. Choosing a quality yourself in Settings turns this off.
+- A red banner means the browser is drawing 3D on the CPU: hardware acceleration is off or the graphics driver is blocked. The game will be a slideshow until that's fixed: Chrome/Edge → Settings → System → *Use graphics acceleration when available* → relaunch. `chrome://gpu` should then say *WebGL2: Hardware accelerated*. On managed school computers IT may lock this setting.
+- If WebGL 2 isn't available at all, the loading screen says so instead of hanging.

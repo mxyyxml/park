@@ -22,6 +22,26 @@ import { fmt, UI } from '../ui/UI';
 const DT = 1 / 120;
 /** primary input is a finger (phones/tablets); touchscreen laptops with a mouse keep desktop controls */
 function isTouchDevice() { return navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches; }
+/** WebGL support and whether the GPU looks like integrated or software graphics (school laptops, Chromebooks). */
+export function probeGpu(): { ok: boolean; weak: boolean; software: boolean; name: string } {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) return { ok: false, weak: true, software: false, name: '' };
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    const software = /swiftshader|llvmpipe|software|basic render/i.test(name);
+    return { ok: true, weak: software || /intel|uhd|iris|mali|adreno|powervr|vivante|videocore/i.test(name), software, name };
+  } catch { return { ok: false, weak: true, software: false, name: '' }; }
+}
+/** The browser is drawing 3D on the CPU (graphics acceleration off or the GPU driver blocked): a few frames per second at best. */
+function showSoftwareWarning() {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:1000;max-width:min(560px,calc(100% - 32px));padding:14px 18px;background:#b3261e;color:#fff;font:14px/1.45 system-ui,sans-serif;border-radius:6px;cursor:pointer;box-shadow:0 4px 16px #0006';
+  d.innerHTML = '<b>Your browser is not using the graphics card</b>, so the game will run very slowly.<br>Chrome/Edge: Settings → System → turn on <i>Use graphics acceleration when available</i>, then relaunch. Check at <i>chrome://gpu</i>. On a managed school computer this may be locked by IT.<br><small>Click to dismiss</small>';
+  d.onclick = () => d.remove();
+  document.body.append(d);
+}
 function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
 const CALIB_VERSION = 6;
 
@@ -89,8 +109,11 @@ export class Game {
   async init() {
     const params = new URLSearchParams(location.search);
     const s = this.save.settings;
-    if (params.get('q')) s.quality = params.get('q') as Settings['quality'];
-    else if (!localStorageHasSettings() && isTouchDevice()) s.quality = 'low';
+    const gpu = probeGpu();
+    if (!gpu.ok) throw new Error('WebGL 2 is not available. Turn on hardware acceleration in the browser settings (chrome://settings/system), update the browser, or try Chrome/Edge.');
+    if (params.get('q')) { s.quality = params.get('q') as Settings['quality']; s.autoQuality = false; }
+    else if (!localStorageHasSettings() && (isTouchDevice() || gpu.weak)) s.quality = 'low';
+    if (gpu.software) showSoftwareWarning();
     this.ui.setLoading(0.05, 'Initialising renderer');
     await this.yieldUI();
     this.r = new Renderer(this.canvas, s.quality);
@@ -99,7 +122,7 @@ export class Game {
     this.mats = await createMaterials();
     this.ui.setLoading(0.35, 'Building the district');
     await this.yieldUI();
-    const aircon = await loadModel('./assets/models/aircon/aircon.json');
+    const aircon = await loadModel('./assets/models/aircon.json');
     this.builder = new WorldBuilder(true);
     this.builder.aircon = !!aircon;
     this.city = buildCity(this.builder);
@@ -461,14 +484,29 @@ export class Game {
     this.ui.setFade(0);
   }
 
+  /** Step the quality preset down while play stays under 24 fps for 4 s (until the player picks one). */
+  private slowT = 0;
+  private autoQualityCheck(dt: number) {
+    const s = this.save.settings;
+    if (!s.autoQuality || this.paused || (this.mode !== 'free' && this.mode !== 'trial')) { this.slowT = 0; return; }
+    this.slowT = this.fps < 24 ? this.slowT + dt : 0;
+    const order = ['low', 'medium', 'high', 'ultra'] as const;
+    const i = order.indexOf(s.quality);
+    if (this.slowT < 4 || i <= 0) return;
+    this.slowT = 0;
+    s.quality = order[i - 1];
+    this.applySettings(); this.save.flush();
+    this.ui.toast(`Quality lowered to ${s.quality.toUpperCase()}`, 'to keep the game smooth (change in Settings)');
+  }
+
   // ---------------------------------------------------------------------------------- loop
   private frame = (now: number) => {
     requestAnimationFrame(this.frame);
     let dt = (now - this.last) / 1000;
     this.last = now;
+    this.fpsAcc += Math.min(dt, 2); this.fpsN++;  // measure real frame time, before the physics clamp
     if (dt > 0.1) dt = 0.1;
-    this.fpsAcc += dt; this.fpsN++;
-    if (this.fpsAcc > 0.5) { this.fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0; }
+    if (this.fpsAcc > 0.5) { this.fps = this.fpsN / this.fpsAcc; this.fpsAcc = 0; this.fpsN = 0; this.autoQualityCheck(0.5); }
     (window as any).__frames = ((window as any).__frames || 0) + 1;
     this.ui.tick(dt);
 

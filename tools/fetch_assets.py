@@ -25,20 +25,4 @@ for t in TERRAIN:
         open(out, 'wb').write(get(files['Diffuse']['1k']['jpg']['url']))
         shrink(out, 1024, 80)
     print(out, os.path.getsize(out))
-# aircon: keep the gltf, its buffer and only the variant-01 textures
-import sys
-if os.path.exists('public/assets/models/aircon/aircon.json'): sys.exit(0)
-m = json.loads(get('https://api.polyhaven.com/files/exterior_aircon_unit'))['gltf']['1k']['gltf']
-base = 'public/assets/models/aircon'
-os.makedirs(base + '/textures', exist_ok=True)
-open(base + '/aircon.gltf', 'wb').write(get(m['url']))
-for path, f in m['include'].items():
-    if 'rusted' in path: continue
-    open(f'{base}/{path}', 'wb').write(get(f['url']))
-    print(path, f['size'])
-
-# keep only the clean unit: one node at the origin
-g = json.load(open(base + '/aircon.gltf'))
-g['scenes'][0]['nodes'] = [0]
-g['nodes'][0].pop('translation', None)
-json.dump(g, open(base + '/aircon.gltf', 'w'))
+# models (aircon, street props) are fetched and decimated by tools/blender/optimize_models.py

@@ -206,7 +206,7 @@ export class UI {
     const add = (label: string, input: HTMLElement) => { const r = el('div', { class: 'setting' }); r.append(el('span', {}, label), input); p.append(r); };
     const sel = el('select');
     for (const q of ['low', 'medium', 'high', 'ultra']) { const op = el('option', { value: q }, q.toUpperCase()); if (q === s.quality) op.setAttribute('selected', ''); sel.append(op); }
-    sel.addEventListener('change', () => { s.quality = sel.value as Settings['quality']; onChange(s); });
+    sel.addEventListener('change', () => { s.quality = sel.value as Settings['quality']; s.autoQuality = false; onChange(s); });
     add('Graphics quality', sel);
     const range = (label: string, key: keyof Settings, min: number, max: number, step: number) => {
       const i = el('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(s[key]) });
