@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build:page": "npm run build && node tools/artifact.mjs",
-    "build:zip": "npm run build:offline && python3 tools/package.py",
+    "build:play": "npm run build:offline && node -e \"require('fs').copyFileSync('dist-offline/skyline-runner-offline.html', 'play.html')\"",
     "build:offline": "npm run build && node tools/offline.mjs"
   },
   "dependencies": {

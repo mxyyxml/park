@@ -1,11 +1,26 @@
 # Skyline Runner
 
-A first-person freerunning game for the browser: momentum-driven parkour across a procedurally generated rooftop district of white concrete, glass and red steel. It's built with Three.js and TypeScript, with no external assets. Every texture, model, animation and sound is generated in code at startup.
+A first-person freerunning game for the browser: momentum-driven parkour across a procedurally generated rooftop district of white concrete, glass and red steel. It's built with Three.js and TypeScript, using procedural generation plus CC0 photoscans from Poly Haven (see Assets).
+
+## Play it (no install, no npm)
+
+**`play.html`** in this repo is the whole game in one file. It plays with no internet, needs no admin rights, and doesn't install anything.
+
+1. On GitHub, open **`play.html`**. Make sure you're on the branch that has it: use the branch dropdown at the top left of the file list.
+2. Click the **Download raw file** button (the ⬇ icon, top right of the file view). Or click **Code → Download ZIP** on the repo page, extract it, and use `play.html` from inside.
+3. Double-click the downloaded `play.html`, or drag it into a Chrome or Edge tab.
+4. Wait 10–30 seconds for it to load, click **Free Run**, then click the game to capture the mouse.
+
+It works on Windows, Macs and Chromebooks. Chrome or Edge is best. On a slow laptop it starts on Low quality by itself. A red banner means the browser isn't using the graphics card; it tells you how to fix that.
+
+Don't open `index.html`: that's the developer page and only works through npm.
+
+## Developing
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm run build:offline  # one self-contained HTML file that plays with no internet
+npm run build:play     # rebuild play.html (the one-file offline game)
 npm test           # movement physics, camera, level generation, trial validation
 npm run build      # type-check + production build into dist/
 ```
