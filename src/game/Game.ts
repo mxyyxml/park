@@ -46,7 +46,7 @@ function showSoftwareWarning() {
   document.body.append(d);
 }
 function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
-const CALIB_VERSION = 7;
+const CALIB_VERSION = 8;
 
 type Mode = 'loading' | 'attract' | 'free' | 'trial' | 'replay';
 
@@ -99,6 +99,7 @@ export class Game {
   // ---- Night Run
   private horde!: Horde;
   private infView!: InfectedView;
+  private charAssets: Awaited<ReturnType<typeof loadCharacterAssets>> = null;
   private nightRun = false;
   private hp = 100;
   private sinceHit = 99;
@@ -179,6 +180,7 @@ export class Game {
     this.player = new PlayerController(this.builder.world);
     this.player.ziplines = this.builder.ziplines;
     const charAssets = await loadCharacterAssets();
+    this.charAssets = charAssets;
     this.body = new RunnerBody(makeBodyMaterials(this.mats.fabric), true, charAssets);
     this.r.scene.add(this.body.root, this.body.armRoot);
     this.ghostBody = new RunnerBody(makeBodyMaterials(null, true), false, charAssets);
@@ -207,11 +209,11 @@ export class Game {
     }
     this.save.flush();
 
-    this.buildAnchors();
+    this.buildRope();
     this.rain = new Rain();
     this.r.scene.add(this.rain.mesh);
     this.horde = new Horde(this.builder.world);
-    this.infView = new InfectedView(64);
+    this.infView = new InfectedView(64, this.charAssets);
     this.infView.group.visible = false;
     this.r.scene.add(this.infView.group);
     // every lit material joins the cascaded shadow rig (after all scene content exists)
@@ -383,25 +385,8 @@ export class Game {
   }
 
   // ---- grappling hook
-  private anchorMesh!: THREE.InstancedMesh;
   private rope!: THREE.Line;
-  private aimed: { x: number; y: number; z: number } | null = null;
-  /** red rings just above the middle of each edge of every tall roof */
-  private buildAnchors() {
-    const pts: { x: number; y: number; z: number }[] = [];
-    for (const b of this.city.buildings) {
-      if (b.h < 28 || b.kind === 'skeleton') continue;
-      const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2, y = b.h + 1.6;
-      pts.push({ x: b.minX - 0.15, y, z: cz }, { x: b.maxX + 0.15, y, z: cz }, { x: cx, y, z: b.minZ - 0.15 }, { x: cx, y, z: b.maxZ + 0.15 });
-    }
-    this.player.anchors = pts;
-    const geo = new THREE.TorusGeometry(0.34, 0.06, 8, 20);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff1010, emissiveIntensity: 1.6, roughness: 0.4 });
-    this.anchorMesh = new THREE.InstancedMesh(geo, mat, pts.length);
-    const m = new THREE.Matrix4();
-    pts.forEach((a, i) => this.anchorMesh.setMatrixAt(i, m.makeTranslation(a.x, a.y, a.z)));
-    for (let i = 0; i < pts.length; i++) this.anchorMesh.setColorAt(i, new THREE.Color(1, 1, 1));
-    this.r.scene.add(this.anchorMesh);
+  private buildRope() {
     this.rope = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: 0x222222 }));
     this.rope.frustumCulled = false; this.rope.visible = false;
     this.r.scene.add(this.rope);
@@ -419,13 +404,7 @@ export class Game {
     const p = this.player, cam = this.r.camera;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
     const target = p.grappleTarget(cam.position.x, cam.position.y, cam.position.z, fwd.x, fwd.y, fwd.z);
-    if (target !== this.aimed) {
-      const pts = p.anchors, c = new THREE.Color();
-      if (this.aimed) this.anchorMesh.setColorAt(pts.indexOf(this.aimed), c.setRGB(1, 1, 1));
-      if (target) this.anchorMesh.setColorAt(pts.indexOf(target), c.setRGB(3, 3, 3));
-      this.anchorMesh.instanceColor!.needsUpdate = true;
-      this.aimed = target;
-    }
+    this.ui.reticle.classList.toggle('grapple', !!target); // red crosshair: something to grapple in range
     if (f.grapplePressed && target) { p.startGrapple(target); this.audio.playUi('whoosh', 0.5); }
     this.rope.visible = p.state === PState.Grapple && !!p.grapple;
     if (this.rope.visible) {

@@ -210,7 +210,9 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
   for (const n of wideGaps) {
     const mid = (n.lo + n.hi) / 2;
     const hLow = Math.min(n.a.h, n.b.h), hHigh = Math.max(n.a.h, n.b.h);
-    const useBoard = Math.abs(n.a.h - n.b.h) < 2.5 && R() < 0.75;
+    // every level-ish wide alley gets a wall-run billboard; some keep a balance beam as a second line
+    const useBoard = Math.abs(n.a.h - n.b.h) < 2.5;
+    const useBeam = !useBoard || R() < 0.4;
     if (useBoard) {
       // panel along the jump direction, offset from the lane so the runner passes alongside
       const off = 1.3;
@@ -230,7 +232,8 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
       else { az = n.aSide > 0 ? n.a.maxZ : n.a.minZ; bz = n.aSide > 0 ? n.b.minZ : n.b.maxZ; ax = bx = mid; }
       if (n.b.h - n.a.h < 1.2) edges.push({ a: n.a.id, b: n.b.id, kind: 'billboard', ax, az, bx, bz });
       if (n.a.h - n.b.h < 1.2) edges.push({ a: n.b.id, b: n.a.id, kind: 'billboard', ax: bx, az: bz, bx: ax, bz: az });
-    } else {
+    }
+    if (useBeam) {
       // steel I-beam plank at the lower roof height (balance)
       const y = hLow;
       let x0: number, z0: number, x1: number, z1: number;
@@ -406,7 +409,7 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
     cand.sort((p, q) => (q.hi.kind === 'spire' ? 1000 : 0) + q.L - ((p.hi.kind === 'spire' ? 1000 : 0) + p.L));
     let added = 0;
     for (const c of cand) {
-      if (added >= 8 || starts.has(c.hi.id) || usedStart.has(`${Math.round(c.sx)},${Math.round(c.sz)}`)) continue;
+      if (added >= 16 || starts.has(c.hi.id) || usedStart.has(`${Math.round(c.sx)},${Math.round(c.sz)}`)) continue;
       const sy = c.hi.h + 3.1, ey = c.lo.h + 2.6, run = c.L;
       if (b.world.overlapCylinder(c.sx, c.hi.h + 0.05, c.sz, 1.2, 3) || b.world.overlapCylinder(c.ex, c.lo.h + 0.05, c.ez, 1.2, 3)) continue;
       let clear = true;
@@ -452,6 +455,28 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
   buildStreets(b, rng);
   const trainPath = buildTrain(b);
   buildOuterCity(b, rng);
+
+  // wall-run panels: a freestanding billboard on bigger ordinary roofs, only where the roof is clear
+  // with running room on both sides (so it never blocks a lane, prop or trial route)
+  let panels = 0;
+  for (const bl of b.buildings) {
+    if (bl.kind !== 'res' && bl.kind !== 'industrial' && bl.kind !== 'campus' && bl.kind !== 'garden') continue;
+    const w = bl.maxX - bl.minX, d = bl.maxZ - bl.minZ;
+    if (w * d < 200 || Math.min(w, d) < 9) continue;
+    let placed = 0;
+    // try a grid of spots and both orientations; keep the first one or two that fit
+    for (const fx of [0.5, 0.3, 0.7]) for (const fz of [0.5, 0.3, 0.7]) for (const along of (w >= d ? ['x', 'z'] : ['z', 'x'])) {
+      if (placed >= (w * d > 500 ? 2 : 1)) continue;
+      const L = 8, cx = bl.minX + w * fx, cz = bl.minZ + d * fz;
+      const [x0, z0, x1, z1] = along === 'x' ? [cx - L / 2, cz - 0.2, cx + L / 2, cz + 0.2] : [cx - 0.2, cz - L / 2, cx + 0.2, cz + L / 2];
+      if (!b.free(bl, x0, z0, x1, z1, 1.3)) continue;
+      b.occupy(bl, x0 - 1.3, z0 - 1.3, x1 + 1.3, z1 + 1.3); // keep the running room clear of later props
+      if (along === 'x') P.billboard(b, x0, bl.h, cz, x1, cz, 0, 3.4, adI++);
+      else P.billboard(b, cx, bl.h, z0, cx, z1, 0, 3.4, adI++);
+      placed++; panels++;
+    }
+  }
+  void panels; (b as any).wallPanels = panels;
 
   // spawn: on the largest roof of the first residential block
   const spawnB = biggest(blockLots[COLS]);

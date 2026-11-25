@@ -38,11 +38,12 @@ export interface InputFrame {
   quickTurn: boolean;
   kickPressed: boolean;
   grapplePressed: boolean;
+  grapple: boolean; // held: reel the rope in
 }
 
 export function emptyInput(): InputFrame {
   return { moveX: 0, moveY: 0, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false,
-    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false };
+    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false, grapple: false };
 }
 
 export type PEvent =
@@ -78,6 +79,7 @@ export interface Ledge {
 export interface Zipline { ax: number; ay: number; az: number; bx: number; by: number; bz: number }
 
 // ---- tunables -------------------------------------------------------------------------------
+const GRAPPLE_RANGE = 26; // metres: swing between nearby buildings, not across the city
 export const P = {
   R: 0.3,
   H_STAND: 1.8,
@@ -124,8 +126,8 @@ export class PlayerController {
   world: CollisionWorld;
   ziplines: Zipline[] = [];
   /** grapple anchor points (red rings on tall roof edges) */
-  anchors: { x: number; y: number; z: number }[] = [];
-  grapple: { x: number; y: number; z: number } | null = null;
+  grapple: { x: number; y: number; z: number; nx: number; ny: number; nz: number } | null = null;
+  ropeLen = 0;
   grappleCD = 0;
   /** 0 dry .. 1 rain: wet roofs let slides run further */
   wet = 0;
@@ -313,7 +315,7 @@ export class PlayerController {
       case PState.Traverse: this.updateTraverse(dt, input); break;
       case PState.Pipe: this.updatePipe(dt, input); break;
       case PState.Zip: this.updateZip(dt, input); break;
-      case PState.Grapple: this.updateGrapple(dt); break;
+      case PState.Grapple: this.updateGrapple(dt, input); break;
       case PState.Dead: this.deadTime += dt; break;
     }
 
@@ -678,7 +680,7 @@ export class PlayerController {
   // ---- wall run -----------------------------------------------------------------------------
   private tryWallRun(input: InputFrame): boolean {
     const s = this.hSpeed;
-    if (s < P.WALLRUN_MIN_SPEED || this.vel.y < -5.5 || input.moveY < 0.2) return false;
+    if (s < P.WALLRUN_MIN_SPEED || this.vel.y < -8 || input.moveY < 0.2) return false;
     if (this.airTime < 0.05 && this.vel.y < 0) return false;
     const vx = this.vel.x / s, vz = this.vel.z / s;
     const midY = this.pos.y + 1.0;
@@ -729,7 +731,7 @@ export class PlayerController {
     this.wallSurface = surface;
     this.wallPointX = hx; this.wallPointZ = hz;
     // duration depends on entry speed and available surface
-    const timeBySpeed = clamp(0.75 + (along - 4) * 0.13, 0.75, 1.45);
+    const timeBySpeed = clamp(1.1 + (along - 4) * 0.18, 1.1, 2.2);
     const timeBySurface = (len + 0.6) / Math.max(along, 1);
     this.wallRunMax = Math.min(timeBySpeed, timeBySurface);
     this.vel.y = clamp(Math.max(this.vel.y, 0) * 0.5 + 2.4 + along * 0.12, 2.4, 4.4);
@@ -741,9 +743,10 @@ export class PlayerController {
 
   private updateWallRun(dt: number, input: InputFrame) {
     const t = this.stateTime;
-    const gScale = 0.3 + 0.7 * smooth01(0.15, this.wallRunMax, t);
-    this.vel.y = Math.max(-6, this.vel.y - P.G * gScale * dt);
-    this.wallSpeed = Math.max(0, this.wallSpeed - 1.3 * dt);
+    // gravity eases in over the run; holding forward keeps your speed, letting go bleeds it
+    const gScale = 0.15 + 0.85 * smooth01(0.3, this.wallRunMax, t);
+    this.vel.y = Math.max(-4.5, this.vel.y - P.G * gScale * dt);
+    this.wallSpeed = Math.max(0, this.wallSpeed - (input.moveY > 0.3 ? 0.4 : 2.5) * dt);
     // stick to the wall, closing any gap left from a wider entry quickly
     const gapHit = this.wallRay(this.pos.x, this.pos.y + 1.0, this.pos.z, -this.wallNX, -this.wallNZ, P.R + 1.0);
     const pull = 0.8 + (gapHit ? Math.max(0, gapHit.t - P.R - 0.03) * 10 : 0);
@@ -1261,45 +1264,66 @@ export class PlayerController {
   }
 
   // ---- grappling hook -------------------------------------------------------------------------
-  /** best anchor in view: within 42 m, near the centre of the screen, nothing in the way */
+  /** whatever solid surface is under the crosshair within 40 m (not too close) */
   grappleTarget(ex: number, ey: number, ez: number, fx: number, fy: number, fz: number) {
     if (this.grappleCD > 0 || this.state === PState.Dead || this.state === PState.Grapple || this.state === PState.Traverse) return null;
-    let best: { x: number; y: number; z: number } | null = null, bestDot = 0.955;
-    for (const a of this.anchors) {
-      const dx = a.x - ex, dy = a.y - ey, dz = a.z - ez, d = Math.hypot(dx, dy, dz);
-      if (d > 42 || d < 3) continue;
-      const dot = (dx * fx + dy * fy + dz * fz) / d;
-      if (dot <= bestDot) continue;
-      if (this.world.raycast(ex, ey, ez, dx / d, dy / d, dz / d, d - 0.8)) continue;
-      best = a; bestDot = dot;
-    }
-    return best;
+    const hit = this.world.raycast(ex, ey, ez, fx, fy, fz, GRAPPLE_RANGE);
+    if (!hit || hit.t < 3 || (hit.box.flags & F.DEADLY)) return null;
+    // pull to a point just off the surface so the body is not dragged into it
+    return { x: hit.x + hit.nx * 0.5, y: hit.y + Math.max(hit.ny, 0) * 0.3, z: hit.z + hit.nz * 0.5, nx: hit.nx, ny: hit.ny, nz: hit.nz };
   }
-  startGrapple(a: { x: number; y: number; z: number }) {
+  startGrapple(a: { x: number; y: number; z: number; nx: number; ny: number; nz: number }) {
     this.grapple = a;
     this.height = P.H_STAND;
+    // rope from the hands; a little slack taken up so the swing starts at once
+    this.ropeLen = Math.max(2, Math.hypot(a.x - this.pos.x, a.y - (this.pos.y + 1.5), a.z - this.pos.z) * 0.95);
     this.setState(PState.Grapple);
     this.events.push({ type: 'grappleStart' });
   }
-  private updateGrapple(dt: number) {
+
+  /**
+   * Rope swing: gravity and air control act as usual, the rope only pulls (a taut rope removes
+   * the velocity that would stretch it), so falling turns into a pendulum arc. Hold grapple to
+   * reel in (up a wall to its edge); jump lets go keeping all momentum, ready to fire again.
+   */
+  private updateGrapple(dt: number, input: InputFrame) {
     const a = this.grapple!;
-    const dx = a.x - this.pos.x, dy = a.y - (this.pos.y + 1.2), dz = a.z - this.pos.z, d = Math.hypot(dx, dy, dz);
-    // reel in: speed builds quickly, direction always toward the anchor
-    const along = (this.vel.x * dx + this.vel.y * dy + this.vel.z * dz) / Math.max(d, 1e-3);
-    const sp = Math.min(24, Math.max(along, 8) + 34 * dt);
-    this.vel.x = dx / d * sp; this.vel.y = dy / d * sp; this.vel.z = dz / d * sp;
+    this.vel.y = Math.max(-P.TERMINAL, this.vel.y - P.G * dt);
+    // pump: forward input accelerates along the swing, like leaning into it
+    const w = this.wish(input);
+    if (w.mag > 0.05) { this.vel.x += w.x * 5 * dt; this.vel.z += w.z * 5 * dt; }
+    if (input.grapple) this.ropeLen = Math.max(1.2, this.ropeLen - 9 * dt);
+    const dx = this.pos.x - a.x, dy = this.pos.y + 1.5 - a.y, dz = this.pos.z - a.z, d = Math.hypot(dx, dy, dz);
+    const nx = dx / d, ny = dy / d, nz = dz / d;
+    if (d > this.ropeLen) {
+      const vr = this.vel.x * nx + this.vel.y * ny + this.vel.z * nz;
+      const pull = Math.max(vr, 0) + Math.min((d - this.ropeLen) / dt * 0.5, input.grapple ? 12 : 20);
+      this.vel.x -= nx * pull; this.vel.y -= ny * pull; this.vel.z -= nz * pull;
+    }
+    const sp = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
+    if (sp > 28) { this.vel.x *= 28 / sp; this.vel.y *= 28 / sp; this.vel.z *= 28 / sp; }
     const r = this.move(dt, 0.28);
-    const stalled = this.stateTime > 0.2 && Math.hypot(this.pos.x - this.prevPos.x, this.pos.y - this.prevPos.y, this.pos.z - this.prevPos.z) < sp * dt * 0.25;
-    if (d < 2.2 || this.jumpBuffer > 0 || this.stateTime > 3 || stalled) {
-      // let go with a hop that carries you over the roof edge
-      this.jumpBuffer = 0;
-      this.vel.y = Math.max(this.vel.y, 0) * 0.5 + 5;
-      this.grapple = null; this.grappleCD = 0.6;
-      this.setState(PState.Air); this.airEntrySpeed = Math.max(this.hSpeed, 5); this.airTime = 0; this.fallStartY = this.pos.y;
-      this.events.push({ type: 'grappleEnd' });
+    if (this.jumpBuffer > 0 && this.stateTime > 0.1) { this.releaseGrapple(3, 0.15); return; }
+    // reeled right up to the point: hop over the edge (walls) or step onto it (floors)
+    if (d < 1.7 && input.grapple) {
+      // walls: launch up and in, over the edge onto the top (or into a ledge grab)
+      if (a.ny < 0.7) { this.vel.x = -a.nx * 3.5; this.vel.z = -a.nz * 3.5; }
+      this.releaseGrapple(a.ny > 0.7 ? 2 : 8, 0.4);
       return;
     }
-    if (r.grounded && dy < 0.5) { this.ground = r.ground; this.grapple = null; this.setState(PState.Ground); this.grounded = true; this.events.push({ type: 'grappleEnd' }); }
+    if (this.stateTime > 8) { this.releaseGrapple(0, 0.4); return; }
+    // touching down ends the swing; while reeling, brushing a ledge on the way up does not
+    if (r.grounded && this.vel.y <= 0.5 && !input.grapple) {
+      this.grapple = null; this.ground = r.ground; this.setState(PState.Ground); this.grounded = true;
+      this.events.push({ type: 'grappleEnd' });
+    }
+  }
+  private releaseGrapple(hop: number, cooldown: number) {
+    this.jumpBuffer = 0;
+    this.vel.y = Math.min(Math.max(this.vel.y, -2) + hop, 13); // ~4 m of rise: clears a roof edge and parapet, no fling into the sky
+    this.grapple = null; this.grappleCD = cooldown;
+    this.setState(PState.Air); this.airEntrySpeed = Math.max(this.hSpeed, 5); this.airTime = 0; this.fallStartY = this.pos.y;
+    this.events.push({ type: 'grappleEnd' });
   }
 
   // ---- ziplines -----------------------------------------------------------------------------

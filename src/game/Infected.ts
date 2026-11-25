@@ -8,6 +8,8 @@
  * a handful of instanced meshes.
  */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import type { CharacterAssets } from '../player/assets';
 import type { CollisionWorld } from '../physics/collision';
 import type { Building } from '../world/builder';
 
@@ -196,88 +198,148 @@ function turn(a: number, b: number, k: number) {
 }
 
 // ---- rendering --------------------------------------------------------------------------------
-type Part = { mesh: THREE.InstancedMesh; pivot: THREE.Vector3; axis: 'armL' | 'armR' | 'legL' | 'legR' | 'none' };
 
+const UPPER = 0.29, FORE = 0.27, THIGH = 0.44, SHIN = 0.43; // same proportions as the runner
+
+/** bake an asset's meshes into one geometry (position + normal), one group per source mesh */
+function bake(o: THREE.Object3D): { geo: THREE.BufferGeometry; names: string[] } {
+  o.updateMatrixWorld(true);
+  const geos: THREE.BufferGeometry[] = [], names: string[] = [];
+  o.traverse((c) => {
+    const m = c as THREE.Mesh;
+    if (!m.isMesh) return;
+    const g = new THREE.BufferGeometry();
+    const src = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+    g.setAttribute('position', src.getAttribute('position').clone());
+    g.setAttribute('normal', src.getAttribute('normal').clone());
+    g.applyMatrix4(m.matrixWorld);
+    geos.push(g); names.push((Array.isArray(m.material) ? m.material[0] : m.material).name || '');
+  });
+  return { geo: mergeGeometries(geos, true)!, names };
+}
+function plain(g: THREE.BufferGeometry) { const n = g.index ? g.toNonIndexed() : g.clone(); const o = new THREE.BufferGeometry(); o.setAttribute('position', n.getAttribute('position')); o.setAttribute('normal', n.getAttribute('normal')); return o; }
+const segCap = (r: number, len: number) => { const g = new THREE.CapsuleGeometry(r, len - 2 * r, 4, 8); g.translate(0, len / 2, 0); return g; };
+
+type PartKey = 'hips' | 'torso' | 'head' | 'eyes' | 'upperL' | 'upperR' | 'foreL' | 'foreR' | 'wristL' | 'wristR' | 'handL' | 'handR' | 'thighL' | 'thighR' | 'shinL' | 'shinR' | 'shoeL' | 'shoeR';
+
+/**
+ * Infected bodies built on a small skeleton (hips, knees, ankles, shoulders, elbows, wrists, neck)
+ * posed in code every frame. With the sculpted runner assets the pieces are the same sculpted
+ * torso, hips, limbs, head and shoes in drab, varied clothing; without them, simple shapes.
+ */
 export class InfectedView {
   group = new THREE.Group();
-  private parts: Part[] = [];
-  private m = new THREE.Matrix4(); private root = new THREE.Matrix4(); private local = new THREE.Matrix4();
-  private tmp = new THREE.Matrix4(); private q = new THREE.Quaternion(); private e = new THREE.Euler();
+  private parts = {} as Record<PartKey, THREE.InstancedMesh>;
+  private root = new THREE.Matrix4(); private m = new THREE.Matrix4(); private tmp = new THREE.Matrix4();
+  private e = new THREE.Euler(); private q = new THREE.Quaternion(); private one = new THREE.Vector3(1, 1, 1);
 
-  constructor(private max: number) {
+  constructor(private max: number, assets: CharacterAssets | null = null) {
     this.group.name = 'infected';
-    const cloth = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92 });
-    const skin = new THREE.MeshStandardMaterial({ color: 0x7d8a7a, roughness: 0.7 });
+    const cloth = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
+    const skin = new THREE.MeshStandardMaterial({ color: 0x8e9a86, roughness: 0.75 });
+    const hair = new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: 0.9 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x2b2b2d, roughness: 0.8 });
     const eyes = new THREE.MeshStandardMaterial({ color: 0x222211, emissive: 0xd8e27a, emissiveIntensity: 2.2 });
-    const cap = (r: number, len: number) => { const g = new THREE.CapsuleGeometry(r, len, 4, 8); g.translate(0, -(len / 2 + r), 0); return g; };
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, pivot: [number, number, number], axis: Part['axis'], color?: (i: number) => THREE.Color) => {
+    const shirts = [0x4a4f55, 0x6a5440, 0x3b4a5c, 0x77776a, 0x5a3434, 0x3c4d3a, 0x8a8478].map((c) => new THREE.Color(c));
+    const pants = [0x26292e, 0x3d3d44, 0x2e3746, 0x4a3f31, 0x55534d].map((c) => new THREE.Color(c));
+    const add = (k: PartKey, geo: THREE.BufferGeometry, mat: THREE.Material | THREE.Material[], color?: (i: number) => THREE.Color) => {
       const mesh = new THREE.InstancedMesh(geo, mat, max);
       mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false; mesh.count = 0;
       if (color) for (let i = 0; i < max; i++) mesh.setColorAt(i, color(i));
-      this.parts.push({ mesh, pivot: new THREE.Vector3(...pivot), axis });
-      this.group.add(mesh);
+      this.parts[k] = mesh; this.group.add(mesh);
     };
-    const shirts = [0x3b3f45, 0x5a4636, 0x2f3b4a, 0x6b6b5e, 0x4a2f2f, 0x30402f].map((c) => new THREE.Color(c));
-    const pants = [0x23262b, 0x3a3a40, 0x2b3340, 0x40372c].map((c) => new THREE.Color(c));
-    const torso = new THREE.CapsuleGeometry(0.19, 0.42, 4, 10); torso.scale(1.15, 1, 0.75); torso.translate(0, 0.2, 0);
-    add(torso, cloth, [0, 1.06, 0], 'none', (i) => shirts[i % shirts.length]);
-    const head = new THREE.SphereGeometry(0.125, 12, 10); head.scale(0.9, 1.1, 1);
-    add(head, skin, [0, 1.62, 0.02], 'none');
-    const eyeG = new THREE.SphereGeometry(0.018, 6, 4); const eyeL = eyeG.clone().translate(-0.042, 0.02, -0.11); const eyeR = eyeG.clone().translate(0.042, 0.02, -0.11);
-    add(mergeTwo(eyeL, eyeR), eyes, [0, 1.62, 0.02], 'none');
-    add(cap(0.06, 0.48), skin, [-0.25, 1.46, 0], 'armL');
-    add(cap(0.06, 0.48), skin, [0.25, 1.46, 0], 'armR');
-    add(cap(0.085, 0.66), cloth, [-0.1, 0.92, 0], 'legL', (i) => pants[i % pants.length]);
-    add(cap(0.085, 0.66), cloth, [0.1, 0.92, 0], 'legR', (i) => pants[(i + 1) % pants.length]);
+    const shirt = (i: number) => shirts[(i * 7) % shirts.length], pant = (i: number) => pants[(i * 3) % pants.length];
+    if (assets) {
+      const hips = bake(assets.pelvis), torso = bake(assets.torso), head = bake(assets.head), shoe = bake(assets.shoe);
+      add('hips', hips.geo, cloth, pant);
+      add('torso', torso.geo, cloth, shirt);
+      add('head', head.geo, head.names.map((n) => (/hair/.test(n) ? hair : /skin|face/.test(n) || !n ? skin : dark)));
+      add('upperL', plain(assets.sleeveUpper), cloth, shirt); add('upperR', plain(assets.sleeveUpper), cloth, shirt);
+      add('foreL', plain(assets.sleeveFore), cloth, shirt); add('foreR', plain(assets.sleeveFore), cloth, shirt);
+      add('thighL', plain(assets.thigh), cloth, pant); add('thighR', plain(assets.thigh), cloth, pant);
+      add('shinL', plain(assets.shin), cloth, pant); add('shinR', plain(assets.shin), cloth, pant);
+      add('shoeL', shoe.geo, dark); add('shoeR', shoe.geo, dark);
+    } else {
+      const torso = new THREE.CapsuleGeometry(0.17, 0.3, 4, 10); torso.scale(1.15, 1, 0.7); torso.translate(0, 0.32, 0);
+      const hips = new THREE.CapsuleGeometry(0.14, 0.04, 4, 10); hips.scale(1.2, 1, 0.8);
+      const head = new THREE.SphereGeometry(0.11, 14, 10); head.scale(0.9, 1.15, 1);
+      add('hips', hips, cloth, pant); add('torso', torso, cloth, shirt); add('head', head, skin);
+      for (const s of ['L', 'R'] as const) {
+        add(`upper${s}`, segCap(0.055, UPPER), cloth, shirt); add(`fore${s}`, segCap(0.045, FORE * 0.72), cloth, shirt);
+        add(`thigh${s}`, segCap(0.08, THIGH), cloth, pant); add(`shin${s}`, segCap(0.06, SHIN), cloth, pant);
+        const sh = new THREE.BoxGeometry(0.1, 0.08, 0.26); sh.translate(0, -0.03, 0.05); add(`shoe${s}`, sh, dark);
+      }
+    }
+    for (const s of ['L', 'R'] as const) {
+      add(`wrist${s}`, segCap(0.032, FORE * 0.3), skin);
+      const hand = new THREE.SphereGeometry(0.05, 10, 8); hand.scale(0.8, 1.2, 0.55); hand.translate(0, 0.05, 0);
+      add(`hand${s}`, hand, skin);
+    }
+    const eye = new THREE.SphereGeometry(0.016, 6, 4);
+    add('eyes', mergeGeometries([eye.clone().translate(-0.034, 0.01, -0.092), eye.clone().translate(0.034, 0.01, -0.092)])!, eyes);
   }
+
+  /** world matrix for a limb segment from a to b (segment geometry runs along +Y from its origin) */
+  private seg(k: PartKey, i: number, a: THREE.Vector3, b: THREE.Vector3, right: THREE.Vector3) {
+    const y = b.clone().sub(a); const len = y.length(); y.divideScalar(len || 1);
+    let x = new THREE.Vector3().crossVectors(y, right); if (x.lengthSq() < 1e-6) x.set(1, 0, 0); x.normalize();
+    const z = new THREE.Vector3().crossVectors(x, y).normalize();
+    this.m.makeBasis(x, y, z).setPosition(a);
+    this.parts[k].setMatrixAt(i, this.m);
+  }
+  private place(k: PartKey, i: number, local: THREE.Matrix4) { this.m.multiplyMatrices(this.root, local); this.parts[k].setMatrixAt(i, this.m); }
 
   update(list: Infected[], time: number) {
     const n = Math.min(list.length, this.max);
+    const P = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(this.root);
     for (let i = 0; i < n; i++) {
       const z = list[i];
-      // whole-body pose: lean while chasing, topple backwards when floored or dead
-      let fall = 0, lean = 0.08;
-      if (z.state === 'chase') lean = 0.22;
-      if (z.state === 'windup') lean = -0.1 + Math.min(1, z.t / 0.45) * 0.45;
+      // whole-body pose: hunched, leaning into the chase, toppling backwards when floored or dead
+      let fall = 0, lean = 0.06;
+      if (z.state === 'chase') lean = 0.2;
+      if (z.state === 'windup') lean = -0.05 + Math.min(1, z.t / 0.45) * 0.4;
       if (z.state === 'stagger') lean = -0.3;
       if (z.state === 'down' || z.state === 'dead') fall = Math.min(1, Math.max(0, z.t) / 0.45);
       if (z.state === 'down' && z.t > 2.1) fall = Math.max(0, 1 - (z.t - 2.1) / 0.5);
-      this.root.makeTranslation(z.x, z.y + fall * 0.2, z.z);
+      this.root.makeTranslation(z.x, z.y + fall * 0.15, z.z);
       this.e.set(-lean * (1 - fall) + fall * Math.PI / 2, z.yaw, 0, 'YXZ');
       this.root.multiply(this.tmp.makeRotationFromEuler(this.e));
-      const sw = Math.sin(z.gait), moving = z.state === 'chase' || z.state === 'idle' ? 1 : 0.2;
-      const twitch = Math.sin(time * 9 + z.seed * 40) * 0.08;
-      for (const p of this.parts) {
-        let ax = 0, az = 0;
-        if (p.axis === 'armL' || p.axis === 'armR') {
-          const side = p.axis === 'armL' ? 1 : -1;
-          // arms reach forward toward prey, flailing on the strike
-          ax = z.state === 'windup' ? 2.3 - Math.min(1, z.t / 0.45) * 1.7 : z.state === 'chase' ? 1.35 + sw * side * 0.25 + twitch : 0.5 + sw * side * 0.3;
-          az = side * (0.12 + (z.state === 'stagger' ? 0.6 : 0));
-          if (fall) { ax *= 1 - fall; az = side * 1.1 * fall; }
-        } else if (p.axis === 'legL' || p.axis === 'legR') {
-          const side = p.axis === 'legL' ? 1 : -1;
-          ax = sw * side * 0.55 * moving * (1 - fall);
-        }
-        this.e.set(ax, 0, az, 'XYZ');
-        this.local.makeRotationFromEuler(this.e).setPosition(p.pivot);
-        this.m.multiplyMatrices(this.root, this.local);
-        p.mesh.setMatrixAt(i, this.m);
+      const right = new THREE.Vector3(1, 0, 0).transformDirection(this.root);
+      const hunch = 0.35 + z.seed * 0.2, droop = (z.seed - 0.5) * 0.5;
+      const ch = Math.cos(hunch), sh = Math.sin(hunch);
+      const up = (x: number, y: number, zz: number) => P(x, 0.95 + y * ch, -y * sh + zz); // upper body, hunched about the pelvis
+      const sw = Math.sin(z.gait), moving = z.state === 'chase' || z.state === 'idle' ? 1 : 0.15;
+      const twitch = Math.sin(time * 9 + z.seed * 40) * 0.06;
+      // hips, torso, head
+      this.place('hips', i, this.tmp.makeTranslation(0, 0.95, 0));
+      this.e.set(-hunch, 0, 0); this.place('torso', i, this.tmp.makeRotationFromEuler(this.e).setPosition(0, 0.98, 0));
+      const hp = up(0, 0.72, 0.02);
+      this.e.set(-hunch * 0.4 + 0.25, 0, droop, 'YXZ');
+      const headM = new THREE.Matrix4().compose(hp.clone().applyMatrix4(this.root.clone().invert()), this.q.setFromEuler(this.e), this.one);
+      this.place('head', i, headM); this.place('eyes', i, headM);
+      for (const side of [-1, 1] as const) {
+        const s = side < 0 ? 'L' : 'R';
+        // arms: reaching for prey, flailing on the strike, limp when down
+        let ax = z.state === 'windup' ? 2.2 - Math.min(1, z.t / 0.45) * 1.6 : z.state === 'chase' ? 1.3 + sw * side * 0.22 + twitch : 0.45 + sw * side * 0.25;
+        let spread = 0.12 + (z.state === 'stagger' ? 0.6 : 0);
+        if (fall) { ax *= 1 - fall; spread = 1.1 * fall; }
+        const sho = up(side * 0.19, 0.46, 0);
+        const dir = (a: number, sp: number) => new THREE.Vector3(side * Math.sin(sp), -Math.cos(a) * Math.cos(sp), -Math.sin(a) * Math.cos(sp)).transformDirection(this.root);
+        const elb = sho.clone().addScaledVector(dir(ax, spread), UPPER);
+        const fd = dir(ax + 0.35, spread * 0.6);
+        const wri = elb.clone().addScaledVector(fd, FORE * 0.72), end = wri.clone().addScaledVector(fd, FORE * 0.3);
+        this.seg(`upper${s}`, i, sho, elb, right); this.seg(`fore${s}`, i, elb, wri, right);
+        this.seg(`wrist${s}`, i, wri, end, right); this.seg(`hand${s}`, i, end, end.clone().addScaledVector(fd, 0.1), right);
+        // legs: shambling gait with bent knees
+        const a = sw * side * 0.45 * moving * (1 - fall), k = (0.2 + Math.max(0, -sw * side) * 0.55 * moving) * (1 - fall);
+        const hip = P(side * 0.1, 0.91, 0);
+        const kn = P(side * 0.1, 0.91 - Math.cos(a) * THIGH, -Math.sin(a) * THIGH);
+        const ank = kn.clone().add(new THREE.Vector3(0, -Math.cos(a - k), -Math.sin(a - k)).transformDirection(this.root).multiplyScalar(SHIN));
+        this.seg(`thigh${s}`, i, hip, kn, right); this.seg(`shin${s}`, i, kn, ank, right);
+        this.m.copy(this.root).setPosition(ank).multiply(this.tmp.makeRotationY(Math.PI)); // shoes face +Z
+        this.parts[`shoe${s}`].setMatrixAt(i, this.m);
       }
     }
-    for (const p of this.parts) { p.mesh.count = n; p.mesh.instanceMatrix.needsUpdate = true; }
+    for (const p of Object.values(this.parts)) { p.count = n; p.instanceMatrix.needsUpdate = true; }
   }
-}
-
-function mergeTwo(a: THREE.BufferGeometry, b: THREE.BufferGeometry) {
-  const out = new THREE.BufferGeometry();
-  for (const name of ['position', 'normal', 'uv']) {
-    const A = a.getAttribute(name) as THREE.BufferAttribute, B = b.getAttribute(name) as THREE.BufferAttribute;
-    const arr = new Float32Array(A.array.length + B.array.length); arr.set(A.array as Float32Array); arr.set(B.array as Float32Array, A.array.length);
-    out.setAttribute(name, new THREE.BufferAttribute(arr, A.itemSize));
-  }
-  const ia = a.index!.array, ib = b.index!.array, off = a.getAttribute('position').count;
-  const idx = new Uint32Array(ia.length + ib.length); idx.set(ia); for (let i = 0; i < ib.length; i++) idx[ia.length + i] = ib[i] + off;
-  out.setIndex(new THREE.BufferAttribute(idx, 1));
-  return out;
 }

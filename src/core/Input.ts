@@ -148,6 +148,7 @@ export class Input {
     f.quickTurn = this.anyPressed(this.bind.quickTurn);
     f.kickPressed = this.anyPressed(this.bind.kick);
     f.grapplePressed = this.anyPressed(this.bind.grapple) || this.pressedLatch.has('Mouse1');
+    f.grapple = this.any(this.bind.grapple) || !!(this.mouseButtons & 2);
     f.lookX = this.lookDX * this.sensitivity;
     f.lookY = -this.lookDY * this.sensitivity * (this.invertY ? -1 : 1);
     this.lookDX = 0; this.lookDY = 0;
@@ -178,6 +179,7 @@ export class Input {
       f.quickTurn ||= pressed(2);
       f.kickPressed ||= pressed(3);
       f.grapplePressed ||= pressed(11);
+      f.grapple ||= btn(11);
       if (pressed(9)) this.onPausePressed?.();
       if (pressed(8)) this.onRestartPressed?.();
       this.gpPrev = gp.buttons.map((b) => b.pressed);

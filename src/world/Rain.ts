@@ -28,8 +28,8 @@ export class Rain {
         void main() {
           vec3 size = vec3(${BOX.toFixed(1)}, ${HEIGHT.toFixed(1)}, ${BOX.toFixed(1)});
           vec3 vel = vec3(uWind.x, -${FALL.toFixed(1)}, uWind.y);
-          // world-anchored drops: wrap the seed lattice around the camera, then fall with time
-          vec3 rel = fract(position - (uCam + vel * uTime) / size) - 0.5;
+          // world-anchored drops falling along vel, wrapped into a box around the camera
+          vec3 rel = fract(position + (vel * uTime - uCam) / size) - 0.5;
           vec3 wp = uCam + rel * size - vel * aEnd * 0.045;
           vFade = 1.0 - smoothstep(0.3, 0.5, length(rel.xz));
           gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);

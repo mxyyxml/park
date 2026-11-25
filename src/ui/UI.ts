@@ -36,7 +36,7 @@ export class UI {
   private toastEl: HTMLElement;
   private countdownEl: HTMLElement;
   private help: HTMLElement;
-  private reticle: HTMLElement;
+  reticle: HTMLElement;
   debug: HTMLElement;
   prompt: HTMLElement;
   private toastT = 0;
