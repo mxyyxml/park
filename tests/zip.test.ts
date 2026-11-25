@@ -13,18 +13,19 @@ describe('ziplines', () => {
       const p = new PlayerController(b.world);
       p.ziplines = b.ziplines;
       p.spawn(z.ax - ux * 3 - uz * 0.6, z.ay - 3.1, z.az - uz * 3 + ux * 0.6, Math.atan2(-ux, -uz)); // beside the post, still under the cable
-      let rode = false;
+      let rode = false, entry = 0, top = 0;
       for (let k = 0; k < 120 * 30; k++) {
         const f = emptyInput();
         f.moveY = p.state === PState.Zip ? 0 : 1;
         const along = (p.pos.x - z.ax) * ux + (p.pos.z - z.az) * uz;
         f.jump = f.jumpPressed = p.state === PState.Ground && along > 0.4 && !rode;
         p.update(1 / 120, f);
-        if (p.state === PState.Zip) rode = true;
+        if (p.state === PState.Zip) { if (!rode) entry = p.zipSpeed; rode = true; top = Math.max(top, p.zipSpeed); }
         if (rode && p.state === PState.Ground) break;
         if (p.state === PState.Dead) break;
       }
       expect(rode).toBe(true);
+      expect(top).toBeGreaterThan(entry + 2.5); // the ride builds speed
       expect(p.state).toBe(PState.Ground);
       expect(Math.hypot(p.pos.x - z.bx, p.pos.z - z.bz)).toBeLessThan(8);
       expect(Math.abs(p.pos.y - (z.by - 2.6))).toBeLessThan(1.5);

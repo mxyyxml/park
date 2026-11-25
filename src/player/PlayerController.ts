@@ -178,6 +178,8 @@ export class PlayerController {
   pipe: Box | null = null; pipeNX = 0; pipeNZ = 0; pipeLadder = false; pipeClimbPhase = 0;
   // zip
   zip: Zipline | null = null; zipT = 0; zipSpeed = 0;
+  /** death animation: which way the head falls (-1 left, 1 right) and how fast you were going */
+  deathSide = 1; deathSpeed = 0;
 
   events: PEvent[] = [];
   /** Safe positions for respawn after falls (updated while grounded on non-deadly surfaces). */
@@ -310,6 +312,9 @@ export class PlayerController {
   }
 
   die(cause: 'fall' | 'void') {
+    const lateral = this.vel.x * this.rightX + this.vel.z * this.rightZ;
+    this.deathSide = lateral < -0.3 ? -1 : lateral > 0.3 ? 1 : (Math.floor(this.pos.x * 7 + this.pos.z * 3) & 1 ? 1 : -1);
+    this.deathSpeed = Math.hypot(this.vel.x, this.vel.z);
     this.setState(PState.Dead);
     this.deadTime = 0;
     this.vel.x = this.vel.z = 0; this.vel.y = 0;
@@ -1258,6 +1263,7 @@ export class PlayerController {
       const L = Math.sqrt(L2);
       const along = (this.vel.x * dx + this.vel.y * dy + this.vel.z * dz) / L;
       this.zip = z; this.zipT = t; this.zipSpeed = Math.max(4, along);
+      this.jumpBuffer = 0; // the press that caught the line must not also count as letting go
       this.setState(PState.Zip);
       this.events.push({ type: 'zipStart' });
       return true;
@@ -1270,8 +1276,9 @@ export class PlayerController {
     const dx = z.bx - z.ax, dy = z.by - z.ay, dz = z.bz - z.az;
     const L = Math.hypot(dx, dy, dz);
     const sinSlope = -dy / L;
-    this.zipSpeed = Math.min(16, this.zipSpeed + (P.G * 0.5 * sinSlope - 0.4) * dt);
-    this.zipSpeed = Math.max(this.zipSpeed, 3);
+    // speed builds along the line: gravity down the slope plus the trolley's run, against air drag (terminal ~15-22 m/s)
+    const acc = P.G * sinSlope + 1.6 - 0.008 * this.zipSpeed * this.zipSpeed;
+    this.zipSpeed = Math.min(22, Math.max(3, this.zipSpeed + acc * dt));
     this.zipT += this.zipSpeed * dt / L;
     const hx = z.ax + dx * this.zipT, hy = z.ay + dy * this.zipT, hz = z.az + dz * this.zipT;
     this.pos.x = hx; this.pos.y = hy - 2.05; this.pos.z = hz;

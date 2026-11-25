@@ -61,12 +61,14 @@ export class CameraRig {
         case 'bump': this.trauma = Math.min(1, this.trauma + 0.3); this.pitchKick.v += 1.2; break;
         case 'walljump': this.rollS.v += 0; break;
         case 'handplant': this.dip.v -= 0.5; break;
-        case 'death': this.trauma = 1; break;
+        case 'death': this.trauma = 1; this.dip.v -= 5; this.pitchKick.v -= 3; break;
         case 'roll': this.rollPitch = 0; break;
         case 'mantleJump': this.dip.v -= 1.2; this.pitchKick.v += 1.4; break;
       }
     }
   }
+
+  private deathYaw = 0;
 
   update(dt: number, p: PlayerController, alpha: number) {
     this.t += dt;
@@ -91,13 +93,21 @@ export class CameraRig {
     } else if (st === PState.Hang) eyeT = P.HANG_DROP - 0.32;
     else if (st === PState.WallRun) { rollT += -p.wallSide * 0.2 * c; fovAdd += 3; }
     else if (st === PState.WallClimb) pitchOff += 0.08;
-    else if (st === PState.Zip) { fovAdd += 6; rollT += Math.sin(this.t * 1.7) * 0.02 * c; }
+    else if (st === PState.Zip) { fovAdd += 3 + clamp(p.zipSpeed / 22, 0, 1) * 9; rollT += Math.sin(this.t * 1.7) * (0.02 + p.zipSpeed * 0.001) * c; }
     else if (st === PState.Traverse) {
       const t = p.tProgress;
       if (p.tKind === 'pullup') { pitchOff += -0.28 * Math.sin(t * Math.PI) + 0.06; }
       else if (p.tKind === 'speedvault' || p.tKind === 'kongvault') { pitchOff += -0.14 * Math.sin(t * Math.PI); rollT += 0.06 * Math.sin(t * Math.PI) * c; }
       else pitchOff += -0.18 * Math.sin(t * Math.PI);
-    } else if (st === PState.Dead) { eyeT = 0.4; }
+    } else if (st === PState.Dead) {
+      // collapse: head hits the ground, flops onto one side, view drifts as you black out
+      const t = p.deadTime, k = smooth(clamp(t / 0.5, 0, 1));
+      eyeT = 0.18;
+      rollT += p.deathSide * 1.35 * k;
+      pitchOff += (-p.pitch + 0.12) * k - 0.35 * Math.sin(clamp(t / 0.35, 0, 1) * Math.PI) * clamp(p.deathSpeed / 8, 0.3, 1);
+      this.deathYaw = p.deathSide * (0.25 * k + 0.04 * t);
+    }
+    if (st !== PState.Dead) this.deathYaw = 0;
     if (st !== PState.Roll) this.rollPitch *= Math.max(0, 1 - dt * 20);
     if (p.stumble > 0) { eyeT -= 0.35 * clamp(p.stumble / 0.75, 0, 1); pitchOff -= 0.12 * clamp(p.stumble / 0.75, 0, 1); }
     // snap the spring when the state changes discontinuously into hang to avoid seeing through walls
@@ -130,7 +140,7 @@ export class CameraRig {
     const n1 = Math.sin(this.t * 37.1) * Math.sin(this.t * 13.7), n2 = Math.sin(this.t * 29.3 + 1.1) * Math.sin(this.t * 17.9);
     const n3 = Math.sin(this.t * 23.3 + 2.1);
 
-    this.yaw = p.yaw + n1 * sh * 0.02;
+    this.yaw = p.yaw + this.deathYaw + n1 * sh * 0.02;
     this.pitch = clamp(p.pitch + pitchOff + kick * 0.05 + bobPitch + n2 * sh * 0.02, -1.55, 1.55) + this.rollPitch;
     this.roll = roll + bobRoll + n3 * sh * 0.015;
 

@@ -340,12 +340,15 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
   };
   /** zipline from roof hiB (start post) down to roof loB (end post) */
   const addZip = (hiB: Building, loB: Building, sx: number, sz: number, ex: number, ez: number) => {
-    const sy = hiB.h + 3.1, ey = loB.h + 2.6;
+    const ey = loB.h + 2.6;
+    let sy = hiB.h + 3.1;
     // a rider hangs ~2 m under the cable: open the roof-edge wall where the cable crosses it at both ends
     const L = Math.hypot(ex - sx, ez - sz), dx = (ex - sx) / L, dz = (ez - sz) / L;
     for (const [bl, px, pz, ux, uz] of [[hiB, sx, sz, dx, dz], [loB, ex, ez, -dx, -dz]] as [Building, number, number, number, number][]) {
       const tx = ux > 1e-6 ? (bl.maxX - px) / ux : ux < -1e-6 ? (bl.minX - px) / ux : Infinity;
       const tz = uz > 1e-6 ? (bl.maxZ - pz) / uz : uz < -1e-6 ? (bl.minZ - pz) / uz : Infinity;
+      // steep line: lift the start so the rider's feet (2.05 m under the cable) still clear the roof edge
+      if (bl === hiB) { const f = Math.min(tx, tz) / L; sy = Math.max(sy, (hiB.h + 2.3 - ey * f) / (1 - f)); }
       if (tx < tz) { const c = pz + uz * tx; doors.push({ bl, axis: 'x', side: Math.sign(ux), lo: c - 2.6, hi: c + 2.6 }); }
       else { const c = px + ux * tz; doors.push({ bl, axis: 'z', side: Math.sign(uz), lo: c - 2.6, hi: c + 2.6 }); }
     }

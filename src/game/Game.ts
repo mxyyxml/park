@@ -43,7 +43,7 @@ function showSoftwareWarning() {
   document.body.append(d);
 }
 function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
-const CALIB_VERSION = 6;
+const CALIB_VERSION = 7;
 
 type Mode = 'loading' | 'attract' | 'free' | 'trial' | 'replay';
 
@@ -561,9 +561,10 @@ export class Game {
     // events → camera, audio, game
     this.rig.onEvents(this.frameEvents);
     this.audio.onEvents(this.frameEvents);
-    for (const e of this.frameEvents) if (e.type === 'death') { this.deadT = 1.1; this.ui.setFade(0.85, true); }
+    for (const e of this.frameEvents) if (e.type === 'death') { this.deadT = 1.9; this.ui.setFade(0.45, true); }
     if (p.state === PState.Dead) {
       this.deadT -= dt;
+      if (this.deadT < 0.75) this.ui.setFade(1); // black out after the collapse
       if (this.deadT <= 0) { this.respawn(); this.ui.toast(this.mode === 'trial' ? 'Checkpoint' : 'Respawned', '', false, 1.0); }
     }
     // camera & body
