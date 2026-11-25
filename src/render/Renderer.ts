@@ -22,13 +22,14 @@ const GradeShader = {
     uHighTint: { value: new THREE.Vector3(1.04, 1.0, 0.95) },
     uVignette: { value: 0.32 },
     uSpeed: { value: 0.0 },
+    uSlow: { value: 0.0 },
     uFlash: { value: 0.0 },
     uFlashColor: { value: new THREE.Vector3(1, 1, 1) },
     uTime: { value: 0 },
   },
   vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: /* glsl */`
-uniform sampler2D tDiffuse; uniform float uExposure, uSaturation, uContrast, uVignette, uSpeed, uFlash, uTime;
+uniform sampler2D tDiffuse; uniform float uExposure, uSaturation, uContrast, uVignette, uSpeed, uSlow, uFlash, uTime;
 uniform vec3 uShadowTint, uHighTint, uFlashColor;
 varying vec2 vUv;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.5453); }
@@ -53,6 +54,17 @@ void main(){
   // vignette
   float v = 1.0 - uVignette * smoothstep(0.25, 0.95, length(c * vec2(1.25, 1.0)) * 1.3);
   col *= v;
+  // speed lines: thin streaks rushing outward from the centre at high speed
+  float ang = atan(c.y, c.x * 1.6), rr = length(c * vec2(1.6, 1.0));
+  float spoke = floor(ang * 38.0);
+  float on = step(0.86, h21(vec2(spoke, 3.1)));
+  float flow = fract(rr * 2.2 - uTime * (2.5 + h21(vec2(spoke, 7.7)) * 2.0) + h21(vec2(spoke, 1.3)));
+  float thin = 1.0 - smoothstep(0.0, 0.35, abs(fract(ang * 38.0) - 0.5) * 2.0 - 0.3);
+  float lines = on * thin * smoothstep(0.22, 0.6, rr) * smoothstep(0.0, 0.25, flow) * (1.0 - smoothstep(0.25, 0.5, flow));
+  col += vec3(lines) * clamp(uSpeed - 0.6, 0.0, 1.2) * 0.1;
+  // slow motion: drained colour, cool tint, darker edges
+  col = mix(col, vec3(dot(col, vec3(0.2126, 0.7152, 0.0722))) * vec3(0.9, 0.97, 1.1), uSlow * 0.55);
+  col *= 1.0 - uSlow * 0.35 * smoothstep(0.3, 0.8, length(c) * 1.3);
   col = mix(col, uFlashColor, uFlash);
   // fine film grain to break banding
   col += (h21(vUv * 1000.0 + uTime) - 0.5) * 0.004;
@@ -348,7 +360,8 @@ export class Renderer {
     this.csm.update();
   }
 
-  render(dt: number, speed: number) {
+  render(dt: number, speed: number, slow = 0) {
+    this.grade.uniforms.uSlow.value = slow;
     this.driftSky(dt);
     // sun position on screen for the shafts pass; fades when the sun leaves the view
     const cam = this.camera;

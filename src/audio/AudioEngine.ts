@@ -1,3 +1,4 @@
+import { Music } from './Music';
 /**
  * Procedural audio. Every sound is synthesised at startup into AudioBuffers (no assets):
  * surface-specific footsteps, cloth, breathing, wind, landings, slides, hand contacts,
@@ -74,6 +75,17 @@ export class AudioEngine {
     this.ready = true;
   }
 
+  music: Music | null = null;
+  private musicVol = 0.5;
+  /** soundtrack on/off for play modes; intensity follows speed, night picks the dark progression */
+  setMusic(on: boolean, night = false) {
+    if (!this.ctx) return;
+    if (!this.music) this.music = new Music(this.ctx, this.master);
+    this.music.night = night;
+    this.music.setVolume(this.musicVol);
+    if (on) this.music.start(); else this.music.stop();
+  }
+  setMusicVolume(v: number) { this.musicVol = v; this.music?.setVolume(v); }
   setVolume(v: number) { this.volume = v; if (this.master) this.master.gain.value = v; }
 
   // ---- synthesis ------------------------------------------------------------------------------
@@ -335,6 +347,7 @@ export class AudioEngine {
     if (!this.ctx || !this.ready) return;
     const t = this.ctx.currentTime;
     this.speed += (speed - this.speed) * Math.min(1, dt * 4);
+    this.music?.setIntensity(Math.min(1, this.speed / 13));
     this.height = height;
     const sn = Math.min(1, this.speed / 12);
     // wind: rises with speed and altitude

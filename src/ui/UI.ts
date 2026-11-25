@@ -68,11 +68,12 @@ export class UI {
       Build speed before gaps — momentum is everything.`);
     this.debug = el('div', { id: 'debug', class: 'hidden' });
     this.health = el('div', { id: 'health', class: 'hidden' }, '<i></i>');
+    this.comboEl = el('div', { id: 'combo', class: 'hidden' }, '<div class="move"></div><div class="chain"></div><div class="score"></div>');
     this.hurt = el('div', { id: 'hurt', class: 'layer' });
     this.prompt = el('div', { id: 'prompt', class: 'hidden' }, 'Click to resume');
     this.touchLayer = el('div', { id: 'touch', class: 'hidden' }, `<div class="stick"><i></i></div><button class="tbtn up" aria-label="Up: jump, climb, vault">UP</button><button class="tbtn down" aria-label="Down: slide, roll, drop">DOWN</button><button class="tbtn pause" aria-label="Pause">II</button>`);
     this.hud.append(this.touchLayer);
-    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt, this.health, this.hurt);
+    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt, this.health, this.hurt, this.comboEl);
     this.menu = el('div', { class: 'layer menu hidden' });
     this.fade = el('div', { id: 'fade', class: 'layer' });
     this.root.append(this.hud, this.menu, this.fade, this.loading);
@@ -98,7 +99,20 @@ export class UI {
     if (split != null) s += `<span class="split ${split <= 0 ? 'ahead' : 'behind'}">${split <= 0 ? '−' : '+'}${Math.abs(split).toFixed(2)}</span>`;
     this.timer.innerHTML = s;
   }
-  health: HTMLElement; hurt: HTMLElement;
+  health: HTMLElement; hurt: HTMLElement; comboEl: HTMLElement;
+  private bankT = 0; private lastBanked = 0;
+  /** flow combo: current move, chain points x multiplier, total score; null hides it */
+  setCombo(c: { label: string; labelT: number; chain: number; pending: number; mult: number; score: number; banked: number } | null) {
+    this.comboEl.classList.toggle('hidden', !c);
+    if (!c) return;
+    const q = (s: string) => this.comboEl.querySelector(s) as HTMLElement;
+    if (c.banked && c.banked !== this.lastBanked) { this.bankT = 1.6; this.lastBanked = c.banked; }
+    this.bankT -= 1 / 60;
+    q('.move').textContent = c.labelT > 0 && c.chain ? c.label : '';
+    q('.chain').innerHTML = c.chain ? `${c.pending} <b>×${c.mult}</b>` : this.bankT > 0 ? `+${this.lastBanked}` : '';
+    q('.chain').classList.toggle('banked', !c.chain && this.bankT > 0);
+    q('.score').textContent = c.score ? `SCORE ${c.score}` : '';
+  }
   /** Night Run health bar; null hides it */
   setHealth(v: number | null) {
     this.health.classList.toggle('hidden', v == null);
@@ -235,10 +249,12 @@ export class UI {
     range('Camera motion (bob, tilt, shake)', 'comfort', 0, 1, 0.05);
     check('Wall-jump view assist', 'autoTurn');
     range('Master volume', 'volume', 0, 1, 0.01);
+    range('Music volume', 'music', 0, 1, 0.01);
     check('Speed readout', 'showSpeed');
     check('Centre dot', 'reticle');
     check('Runner vision (route marker)', 'runnerVision');
     check('Night (free run & trials)', 'night');
+    check('Slow motion on big jumps', 'slowMo');
     p.append(this.button('Back', onBack));
     this.open(p);
   }

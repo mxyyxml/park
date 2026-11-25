@@ -15,6 +15,7 @@ import { Input } from '../core/Input';
 import { AudioEngine } from '../audio/AudioEngine';
 import { buildTrials, calibrate, TrialDef } from './Trials';
 import { Horde, InfectedView } from './Infected';
+import { Combo } from './Combo';
 import { Bot } from './Bot';
 import { decodeGhost, encodeGhost, GhostPlayback, GhostRecorder } from './Ghost';
 import { Save, Settings } from './Save';
@@ -102,6 +103,7 @@ export class Game {
   private sinceHit = 99;
   private kickCD = 0;
   private kills = 0;
+  private combo = new Combo();
   private survived = 0;
   private fps = 60; private fpsAcc = 0; private fpsN = 0;
   private debugOn = false;
@@ -264,6 +266,7 @@ export class Game {
     this.rig.baseFov = s.fov;
     this.player.comfortAutoTurn = s.autoTurn;
     this.audio.setVolume(s.volume);
+    this.audio.setMusicVolume(s.music);
     this.ui.applySettings(s);
     if (this.r.quality !== s.quality) this.r.applyQuality(s.quality);
   }
@@ -356,9 +359,12 @@ export class Game {
   /** leave Night Run state; lighting follows the Night setting */
   private setNightRun(on: boolean) {
     this.nightRun = on;
+    this.combo = new Combo();
+    this.ui.setCombo(this.mode === 'free' ? this.combo : null);
     this.infView.group.visible = on;
     this.ui.setHealth(on ? 100 : null);
     this.r.setNight(on || (this.save.settings.night && this.mode !== 'attract'));
+    this.audio.setMusic(this.mode === 'free' || this.mode === 'trial', on);
   }
 
   startNight() {
@@ -547,16 +553,21 @@ export class Game {
     (window as any).__frames = ((window as any).__frames || 0) + 1;
     this.ui.tick(dt);
 
+    // slow motion eases in and out; the world and the runner run on scaled time, the screen does not
+    if (this.slowMoT > 0 && !this.paused) this.slowMoT -= dt;
+    const slowTarget = this.slowMoT > 0 && (this.mode === 'free' || this.mode === 'trial') ? 1 : 0;
+    this.slowAmt += (slowTarget - this.slowAmt) * Math.min(1, dt * (slowTarget ? 12 : 5));
+    const gdt = dt * (1 - this.slowAmt * (1 - this.slowScale));
     if (this.mode === 'attract') this.updateAttract(dt);
     else if (this.mode === 'replay') this.updateReplay(dt);
-    else if (this.mode === 'free' || this.mode === 'trial') this.updatePlay(dt);
+    else if (this.mode === 'free' || this.mode === 'trial') this.updatePlay(gdt);
 
-    this.dynamic.update(dt, this.r.camera.position);
+    this.dynamic.update(gdt, this.r.camera.position);
     this.animateShards(dt);
     for (const b of this.cpBeams) (b.material as THREE.ShaderMaterial).uniforms.uTime.value += dt;
     this.r.updateSun(this.r.camera.position);
     const speed = this.mode === 'free' || this.mode === 'trial' ? this.player.hSpeed : 0;
-    this.r.render(dt, Math.max(0, (speed - 6) / 4) * this.save.settings.comfort);
+    this.r.render(dt, Math.max(0, (speed - 6) / 4) * this.save.settings.comfort, this.slowAmt);
     if (this.debugOn) this.updateDebug();
   };
 
@@ -598,6 +609,17 @@ export class Game {
     // events → camera, audio, game
     this.rig.onEvents(this.frameEvents);
     this.audio.onEvents(this.frameEvents);
+    if (this.mode === 'free') {
+      this.combo.feed(this.frameEvents);
+      this.combo.update(dt, p.hSpeed);
+      this.ui.setCombo(this.combo);
+    }
+    for (const e of this.frameEvents) if (e.type === 'jump' && e.speed > 7.5) {
+      // launching fast over a big drop: a moment of slow motion over the gap
+      const k = 0.7, gx = p.pos.x + p.vel.x * k, gz = p.pos.z + p.vel.z * k;
+      const below = this.builder.world.groundHeight(gx, gz, p.pos.y + 0.5, 40);
+      if (!below || p.pos.y - below.y > 7) this.slowMo(0.4, 0.55);
+    }
     for (const e of this.frameEvents) if (e.type === 'death') { this.deadT = 1.9; this.ui.setFade(0.45, true); }
     if (p.state === PState.Dead) {
       this.deadT -= dt;
@@ -650,6 +672,13 @@ export class Game {
     if (this.helpT > 0) { this.helpT -= dt; if (this.helpT <= 0 || (this.mode === 'free' && p.hSpeed > 1 && this.helpT < 14)) { if (this.helpT <= 0) this.ui.fadeHelp(); } }
   }
   private splitShowT = 0;
+  // ---- slow motion
+  private slowMoT = 0; private slowAmt = 0; private slowScale = 0.35;
+  /** slow time to `scale` for `secs` of real time (big jumps, takedowns) */
+  private slowMo(scale: number, secs: number) {
+    if (!this.save.settings.slowMo || this.mode === 'trial') return; // never in timed runs
+    this.slowScale = scale; this.slowMoT = Math.max(this.slowMoT, secs);
+  }
 
   private updateNightRun(dt: number, f: { kickPressed: boolean }) {
     const p = this.player, alive = p.state !== PState.Dead;
@@ -663,11 +692,13 @@ export class Game {
       this.rig.onEvents([{ type: 'bump', speed: 4 }]);
       this.audio.playFx('kick', hits ? 0.9 : 0.35);
       this.body.kick();
-      if (hits) this.ui.toast(power >= 12 ? 'Dropkick' : 'Kick', '', true, 0.6);
+      if (hits) { this.combo.add(power >= 12 ? 'dropkick' : 'kick'); this.slowMo(0.3, 0.12); }
     }
     const before = this.horde.alive;
     this.horde.update(dt, { x: p.pos.x, y: p.pos.y, z: p.pos.z, alive });
-    this.kills += Math.max(0, before - this.horde.alive);
+    const downed = Math.max(0, before - this.horde.alive);
+    this.kills += downed;
+    if (downed) { this.combo.add('takedown'); this.slowMo(0.25, 0.4); }
     for (const e of this.horde.events) {
       if (e.type === 'groan') this.audio.playAt('groan', e.x, e.y, e.z, 0.8, 0.9 + Math.random() * 0.2);
       else if (e.type === 'hit' && alive) {
