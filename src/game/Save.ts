@@ -12,11 +12,12 @@ export interface Settings {
   reticle: boolean;
   runnerVision: boolean;  // highlight next checkpoint route
   autoQuality: boolean;   // lower quality by itself when the frame rate stays low
+  night: boolean;         // night lighting in free run and trials (Night Run is always night)
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   quality: 'high', fov: 88, sensitivity: 1, invertY: false, comfort: 0.85, autoTurn: true, volume: 0.8,
-  showSpeed: true, reticle: true, runnerVision: true, autoQuality: true,
+  showSpeed: true, reticle: true, runnerVision: true, autoQuality: true, night: false,
 };
 
 export interface TrialRecord { best: number | null; splits: number[] | null; ghost: string | null; runs: number }

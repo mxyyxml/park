@@ -107,3 +107,8 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #touch .up { right: calc(28px + env(safe-area-inset-right, 0px)); bottom: calc(110px + env(safe-area-inset-bottom, 0px)); width: 92px; height: 92px; }
 #touch .down { right: calc(130px + env(safe-area-inset-right, 0px)); bottom: calc(40px + env(safe-area-inset-bottom, 0px)); width: 76px; height: 76px; }
 #touch .pause { right: calc(18px + env(safe-area-inset-right, 0px)); top: calc(70px + env(safe-area-inset-top, 0px)); width: 44px; height: 44px; font-size: 12px; }
+
+#health { position: absolute; left: 28px; bottom: 74px; width: 160px; height: 6px; background: #fff3; }
+#health i { display: block; height: 100%; width: 100%; background: var(--white); transition: width .2s; }
+#health i.low { background: var(--red); }
+#hurt { opacity: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 45%, rgba(170, 0, 8, .75) 100%); }

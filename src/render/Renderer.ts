@@ -216,7 +216,8 @@ export class Renderer {
       lightNear: 1, lightFar: 3000, lightMargin: 220, shadowBias: -0.0002,
     });
     this.csm.fade = true;
-    for (const l of this.csm.lights) { l.color.set(0xfff1de); l.shadow.normalBias = 0.04; }
+    for (const l of this.csm.lights) l.shadow.normalBias = 0.04;
+    this.applyLightColor();
     for (const m of this.csmMats.keys()) this.setupShadowMaterial(m);
     this.lastFov = 0;
   }
@@ -304,6 +305,30 @@ export class Renderer {
     this.csm?.lightDirection.copy(d).negate();
   }
 
+  // ---- night ---------------------------------------------------------------------------------
+  night = false;
+  private day: { fog: THREE.Color; hemiC: THREE.Color; hemiI: number; env: number; bg: number; sunC: THREE.Color; exp: number } | null = null;
+
+  /** Moonlit night: dim blue key light, near-black sky, lit windows and lamps carry the scene. */
+  setNight(on: boolean) {
+    const fog = this.scene.fog as THREE.Fog;
+    if (!this.day) this.day = { fog: fog.color.clone(), hemiC: this.hemi.color.clone(), hemiI: this.hemi.intensity, env: this.scene.environmentIntensity, bg: this.scene.backgroundIntensity, sunC: fogUniforms.fogSunColor.value.clone(), exp: this.renderer.toneMappingExposure };
+    const d = this.day;
+    this.night = on;
+    fogUniforms.uNight.value = on ? 1 : 0;
+    fog.color.copy(on ? new THREE.Color(0x0a0f1c) : d.fog);
+    this.hemi.color.copy(on ? new THREE.Color(0x5a74b8) : d.hemiC);
+    this.hemi.intensity = on ? 0.16 : d.hemiI;
+    this.scene.environmentIntensity = on ? 0.12 : d.env;
+    this.scene.backgroundIntensity = on ? 0.035 : d.bg;
+    fogUniforms.fogSunColor.value.copy(on ? new THREE.Color(0x1a2238) : d.sunC);
+    this.renderer.toneMappingExposure = on ? 1.15 : d.exp;
+    this.applyLightColor();
+  }
+  private applyLightColor() {
+    for (const l of this.csm?.lights ?? []) { l.color.set(this.night ? 0x9fb6ff : 0xfff1de); l.intensity = this.night ? 0.55 : 3.4; }
+  }
+
   /** clouds drift: the panorama turns very slowly and the sun (and every shadow) turns with it */
   private driftSky(dt: number) {
     if (!this.photoSky) return;
@@ -332,7 +357,7 @@ export class Renderer {
     const facing = fwd.dot(this.sunDir);
     const u = this.shafts.uniforms;
     u.uSun.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
-    u.uVisible.value = facing > 0 ? THREE.MathUtils.smoothstep(facing, 0.2, 0.7) * (1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(sp.x), Math.abs(sp.y)), 1.0, 1.6)) : 0;
+    u.uVisible.value = this.night ? 0 : facing > 0 ? THREE.MathUtils.smoothstep(facing, 0.2, 0.7) * (1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(sp.x), Math.abs(sp.y)), 1.0, 1.6)) : 0;
     u.uAspect.value = cam.aspect;
     this.grade.uniforms.uTime.value += dt;
     this.grade.uniforms.uSpeed.value = speed;

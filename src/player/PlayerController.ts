@@ -35,11 +35,12 @@ export interface InputFrame {
   crouch: boolean; crouchPressed: boolean;
   sprint: boolean; walk: boolean;
   quickTurn: boolean;
+  kickPressed: boolean;
 }
 
 export function emptyInput(): InputFrame {
   return { moveX: 0, moveY: 0, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false,
-    crouchPressed: false, sprint: false, walk: false, quickTurn: false };
+    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false };
 }
 
 export type PEvent =
@@ -61,7 +62,7 @@ export type PEvent =
   | { type: 'zipStart' }
   | { type: 'zipEnd' }
   | { type: 'bump'; speed: number }
-  | { type: 'death'; cause: 'fall' | 'void' }
+  | { type: 'death'; cause: 'fall' | 'void' | 'infected' }
   | { type: 'quickturn' }
   | { type: 'mantleJump' };
 
@@ -311,7 +312,7 @@ export class PlayerController {
     this.yawAssist = angle; this.yawAssistRate = Math.abs(angle) / dur;
   }
 
-  die(cause: 'fall' | 'void') {
+  die(cause: 'fall' | 'void' | 'infected') {
     const lateral = this.vel.x * this.rightX + this.vel.z * this.rightZ;
     this.deathSide = lateral < -0.3 ? -1 : lateral > 0.3 ? 1 : (Math.floor(this.pos.x * 7 + this.pos.z * 3) & 1 ? 1 : -1);
     this.deathSpeed = Math.hypot(this.vel.x, this.vel.z);

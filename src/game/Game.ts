@@ -14,6 +14,7 @@ import { buildTerrain } from '../world/Terrain';
 import { Input } from '../core/Input';
 import { AudioEngine } from '../audio/AudioEngine';
 import { buildTrials, calibrate, TrialDef } from './Trials';
+import { Horde, InfectedView } from './Infected';
 import { Bot } from './Bot';
 import { decodeGhost, encodeGhost, GhostPlayback, GhostRecorder } from './Ghost';
 import { Save, Settings } from './Save';
@@ -93,6 +94,15 @@ export class Game {
   private demo: { p: PlayerController; bot: Bot; rec: GhostRecorder } | null = null;
   private demoTrial = 0;
   private deadT = 0;
+  // ---- Night Run
+  private horde!: Horde;
+  private infView!: InfectedView;
+  private nightRun = false;
+  private hp = 100;
+  private sinceHit = 99;
+  private kickCD = 0;
+  private kills = 0;
+  private survived = 0;
   private fps = 60; private fpsAcc = 0; private fpsN = 0;
   private debugOn = false;
   private helpT = 0;
@@ -193,6 +203,10 @@ export class Game {
     }
     this.save.flush();
 
+    this.horde = new Horde(this.builder.world);
+    this.infView = new InfectedView(64);
+    this.infView.group.visible = false;
+    this.r.scene.add(this.infView.group);
     // every lit material joins the cascaded shadow rig (after all scene content exists)
     this.r.registerSceneMaterials();
     this.applySettings();
@@ -297,6 +311,7 @@ export class Game {
   toMenu() {
     this.mode = 'attract';
     this.paused = false;
+    this.setNightRun(false);
     this.trial = null; this.cpGroup.clear();
     this.input.unlock();
     this.input.enabled = false;
@@ -307,6 +322,7 @@ export class Game {
     const n = this.save.data.shards.length;
     this.ui.mainMenu({
       onFree: () => { this.audio.init(); this.startFree(); },
+      onNight: () => { this.audio.init(); this.startNight(); },
       onTrials: () => this.showTrials(),
       onSettings: () => this.ui.settingsMenu(this.save.settings, () => { this.applySettings(); this.save.flush(); }, () => this.toMenu()),
       onControls: () => this.ui.controlsMenu(() => this.toMenu()),
@@ -337,8 +353,26 @@ export class Game {
     this.ui.setShards(this.save.data.shards.length, this.city.collectibles.length);
   }
 
+  /** leave Night Run state; lighting follows the Night setting */
+  private setNightRun(on: boolean) {
+    this.nightRun = on;
+    this.infView.group.visible = on;
+    this.ui.setHealth(on ? 100 : null);
+    this.r.setNight(on || (this.save.settings.night && this.mode !== 'attract'));
+  }
+
+  startNight() {
+    this.startFree();
+    this.setNightRun(true);
+    this.hp = 100; this.sinceHit = 99; this.kills = 0; this.survived = 0;
+    this.horde.populate(this.city.buildings, this.city.spawn);
+    this.ui.setCheckpoints(0, 0, 'NIGHT RUN');
+    this.ui.toast('Night Run', 'Stay off the streets. F to kick.', true, 3);
+  }
+
   startFree() {
     this.mode = 'free';
+    this.setNightRun(false);
     this.trial = null; this.cpGroup.clear();
     this.ghostBody.setVisible(false);
     const s = this.city.spawn;
@@ -352,6 +386,7 @@ export class Game {
 
   startTrial(t: TrialDef, instant: boolean) {
     this.mode = 'trial';
+    this.setNightRun(false);
     this.trial = t;
     this.buildCheckpointBeams();
     this.player.spawn(t.start.x, t.start.y, t.start.z, t.start.yaw);
@@ -479,8 +514,10 @@ export class Game {
 
   private respawn() {
     const p = this.player;
+    if (this.nightRun) { this.hp = 100; this.sinceHit = 99; }
     if (this.mode === 'trial') { const r = this.respawnPoint; p.spawn(r.x, r.y, r.z, r.yaw); }
     else { const s = p.lastSafe; p.spawn(s.x, s.y, s.z, s.yaw); }
+    if (this.nightRun) this.horde.clearAround(p.pos.x, p.pos.z, 10);
     this.ui.setFade(0);
   }
 
@@ -531,7 +568,7 @@ export class Game {
     let f = this.input.sample(dt);
     if (this.autopilot) f = this.autopilot.step(p, dt);
     if (this.pendingPress) {
-      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn;
+      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn; f.kickPressed ||= this.pendingPress.kickPressed;
       f.lookX += this.pendingPress.lookX; f.lookY += this.pendingPress.lookY;
       this.pendingPress = null;
     }
@@ -548,7 +585,7 @@ export class Game {
     let ticks = 0;
     this.frameEvents.length = 0;
     while (this.acc >= DT && ticks < 10) {
-      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, lookX: 0, lookY: 0 };
+      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, kickPressed: false, lookX: 0, lookY: 0 };
       p.update(DT, inp);
       for (const e of p.events) this.frameEvents.push(e);
       if (this.trialRunning) { this.trialTime += DT; this.recorder?.record(DT, p); }
@@ -567,6 +604,7 @@ export class Game {
       if (this.deadT < 0.75) this.ui.setFade(1); // black out after the collapse
       if (this.deadT <= 0) { this.respawn(); this.ui.toast(this.mode === 'trial' ? 'Checkpoint' : 'Respawned', '', false, 1.0); }
     }
+    if (this.nightRun) this.updateNightRun(dt, f);
     // camera & body
     this.rig.update(dt, p, alpha);
     this.rig.apply(this.r.camera);
@@ -612,6 +650,44 @@ export class Game {
     if (this.helpT > 0) { this.helpT -= dt; if (this.helpT <= 0 || (this.mode === 'free' && p.hSpeed > 1 && this.helpT < 14)) { if (this.helpT <= 0) this.ui.fadeHelp(); } }
   }
   private splitShowT = 0;
+
+  private updateNightRun(dt: number, f: { kickPressed: boolean }) {
+    const p = this.player, alive = p.state !== PState.Dead;
+    // kick: a dropkick when running fast, sliding or airborne
+    this.kickCD -= dt;
+    if (f.kickPressed && this.kickCD <= 0 && alive) {
+      this.kickCD = 0.55;
+      const air = !p.grounded || p.state === PState.Slide;
+      const power = (8 + p.hSpeed * 0.6) * (air ? 1.5 : 1);
+      const hits = this.horde.kick(p.pos.x, p.pos.y, p.pos.z, p.yaw, power);
+      this.rig.onEvents([{ type: 'bump', speed: 4 }]);
+      this.audio.playFx('kick', hits ? 0.9 : 0.35);
+      this.body.kick();
+      if (hits) this.ui.toast(power >= 12 ? 'Dropkick' : 'Kick', '', true, 0.6);
+    }
+    const before = this.horde.alive;
+    this.horde.update(dt, { x: p.pos.x, y: p.pos.y, z: p.pos.z, alive });
+    this.kills += Math.max(0, before - this.horde.alive);
+    for (const e of this.horde.events) {
+      if (e.type === 'groan') this.audio.playAt('groan', e.x, e.y, e.z, 0.8, 0.9 + Math.random() * 0.2);
+      else if (e.type === 'hit' && alive) {
+        this.hp -= e.dmg; this.sinceHit = 0;
+        const dx = p.pos.x - e.fromX, dz = p.pos.z - e.fromZ, d = Math.hypot(dx, dz) || 1;
+        p.vel.x += dx / d * 4; p.vel.z += dz / d * 4;
+        this.rig.onEvents([{ type: 'bump', speed: 4 }]);
+        this.audio.playFx('hurt', 0.8);
+        this.ui.flashHurt();
+        if (this.hp <= 0) p.die('infected');
+      }
+    }
+    this.sinceHit += dt;
+    if (alive && this.sinceHit > 4) this.hp = Math.min(100, this.hp + 12 * dt);
+    if (alive) this.survived += dt;
+    this.ui.setHealth(this.hp);
+    this.ui.setTimer(this.survived);
+    this.ui.setCheckpoints(0, 0, `NIGHT RUN<br>${this.kills} DOWN`);
+    this.infView.update(this.horde.list, this.survived);
+  }
 
   private checkCheckpoints() {
     const t = this.trial!;

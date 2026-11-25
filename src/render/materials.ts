@@ -17,6 +17,7 @@ export const fogUniforms = {
   fogSunColor: { value: new THREE.Color('#ffe2b8') },
   fogHeightFalloff: { value: 0.012 },
   fogDensity: { value: 0.00042 },
+  uNight: { value: 0 },  // 0 day .. 1 night: lit windows glow (set by Renderer.setNight)
 };
 
 /** shared wind clock for vegetation and flags (advanced by the game loop) */
@@ -169,6 +170,7 @@ varying vec3 vFWPos;
 varying vec3 vFWNormal;
 uniform sampler2D tBrick;
 uniform float uBrick;
+uniform float uNight;
 float fHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float fAA(float edge, float x, float w) { return smoothstep(edge - w, edge + w, x); }
 // interior mapping: returns room colour seen through a window cell
@@ -259,7 +261,7 @@ normal = normalize(mix(normal, normalize((viewMatrix * vec4(fN, 0.0)).xyz), fWin
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 float fFres = pow(1.0 - max(dot(-fV, fN), 0.0), 3.0);
 vec3 fRoomAvg = vec3(0.035, 0.034, 0.033) * (1.0 + 0.8 * fract(fSeed * 13.1));
-totalEmissiveRadiance += mix(fRoomCol, fRoomAvg, fFar) * fWinF * (1.0 - fFres) * 0.85;`);
+totalEmissiveRadiance += mix(fRoomCol, fRoomAvg * (1.0 + uNight * 2.0), fFar) * fWinF * (1.0 - fFres) * 0.85 * (1.0 + uNight * 1.3);`);
   };
   m.customProgramCacheKey = () => 'facade-v3';
   return m;

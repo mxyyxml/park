@@ -606,6 +606,13 @@ export class RunnerBody {
       targets[i] = T; poles[i] = pole;
       void hip;
     }
+    // kick: the right leg snaps forward and up, then recoils
+    if (this.kickT > 0) {
+      const e = Math.sin((1 - this.kickT / 0.4) * Math.PI);
+      targets[1] = V().copy(pelvis).addScaledVector(fwd, 0.1 + 0.78 * e).addScaledVector(up, -0.82 + 0.5 * e).addScaledVector(right, 0.1);
+      footDir[1].copy(fwd); footPitch[1] = -0.7 * e;
+      this.kickT = Math.max(0, this.kickT - dt);
+    }
     // smooth feet slightly when changing modes (avoid pops), fast enough not to lag the gait
     if (!this.footInit) { this.footSpring[0].copy(targets[0]); this.footSpring[1].copy(targets[1]); this.footInit = true; }
     const k = Math.min(1, dt * 30);
@@ -633,6 +640,8 @@ export class RunnerBody {
     }
   }
   private lastPelvis = V();
+  private kickT = 0;
+  kick() { this.kickT = 0.4; }
   private fpViewKey = -1;
   private tailPts: THREE.Vector3[] = [];
   private tailPrev: THREE.Vector3[] = [];

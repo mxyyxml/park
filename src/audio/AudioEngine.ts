@@ -182,6 +182,18 @@ export class AudioEngine {
     this.add('collect', this.buf(1.0, (_i, t) => [1046, 1568, 2093, 2637].reduce((s, f, k) => s + Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 5) * (t > k * 0.05 ? 1 : 0), 0)));
     this.add('finish', this.buf(2.0, (_i, t) => [523, 659, 784, 1046].reduce((s, f, k) => s + Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 1.6) * (t > k * 0.11 ? 1 : 0) * (1 + 0.3 * Math.sin(2 * Math.PI * 5 * t)), 0)));
     { const lp = BQ.make('lp', 300, 0.7); this.add('death', this.buf(1.6, (_i, t) => Math.sin(2 * Math.PI * 45 * t) * Math.exp(-t * 2.5) + lp.p(r()) * Math.exp(-t * 4) * 2)); }
+    // infected: throaty groans (formant-filtered growl with a falling pitch), kick impact, player hit
+    for (let v = 0; v < 3; v++) {
+      const bp1 = BQ.make('bp', 520 + v * 90, 3), bp2 = BQ.make('bp', 1150 + v * 140, 4), len = 1.1 + v * 0.3;
+      this.add('groan', this.buf(len, (_i, t) => {
+        const f0 = 92 - v * 9 - t * 18 + Math.sin(t * 7 + v) * 6;
+        const src = ((t * f0) % 1) * 2 - 1 + r() * 0.35;
+        const env = Math.min(1, t * 6) * Math.min(1, (len - t) * 3) * (0.75 + 0.25 * Math.sin(t * 23));
+        return (bp1.p(src) + bp2.p(src) * 0.5) * env;
+      }));
+    }
+    { const lp = BQ.make('lp', 700, 0.8); this.add('kick', this.buf(0.35, (_i, t) => Math.sin(2 * Math.PI * (110 - t * 160) * t) * Math.exp(-t * 14) + lp.p(r()) * Math.exp(-t * 30) * 1.5)); }
+    { const lp = BQ.make('lp', 900, 0.7); this.add('hurt', this.buf(0.5, (_i, t) => (lp.p(r()) * 1.2 + Math.sin(2 * Math.PI * 70 * t)) * Math.exp(-t * 7))); }
     for (let v = 0; v < 3; v++) {
       const f1 = 330 + v * 40, f2 = f1 * 1.26;
       this.add('horn', this.buf(0.9, (_i, t) => { const env = Math.min(1, t * 30) * Math.min(1, (0.9 - t) * 10); const saw = (f: number) => ((t * f) % 1) * 2 - 1; return (saw(f1) + saw(f2)) * env * 0.5; }));
@@ -245,6 +257,21 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     e.panner.positionX.setTargetAtTime(x, t, 0.05); e.panner.positionY.setTargetAtTime(y, t, 0.05); e.panner.positionZ.setTargetAtTime(z, t, 0.05);
   }
+
+  /** one-shot sound at a world position (HRTF), e.g. an infected groan */
+  playAt(name: string, x: number, y: number, z: number, gain = 1, rate = 1) {
+    if (!this.ctx || !this.bufs.has(name)) return;
+    const ctx = this.ctx, list = this.bufs.get(name)!;
+    const src = ctx.createBufferSource(); src.buffer = list[Math.floor(Math.random() * list.length)]; src.playbackRate.value = rate;
+    const panner = ctx.createPanner();
+    panner.panningModel = 'HRTF'; panner.distanceModel = 'inverse'; panner.refDistance = 3; panner.rolloffFactor = 1.3;
+    panner.positionX.value = x; panner.positionY.value = y; panner.positionZ.value = z;
+    const g = ctx.createGain(); g.gain.value = gain;
+    src.connect(g).connect(panner).connect(this.sfx);
+    src.start();
+  }
+  /** player feedback sounds without position */
+  playFx(name: 'kick' | 'hurt', g = 0.7) { this.play(name, g, 0.95 + Math.random() * 0.1, 0.2); }
 
   setListener(x: number, y: number, z: number, fx: number, fy: number, fz: number) {
     if (!this.ctx) return;

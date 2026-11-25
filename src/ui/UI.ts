@@ -63,14 +63,16 @@ export class UI {
       <b>MOVE</b> <kbd>W A S D</kbd> &nbsp; <b>SPRINT</b> <kbd>SHIFT</kbd><br>
       <b>UP</b> <kbd>SPACE</kbd> jump · wall-run · wall-climb · grab · vault<br>
       <b>DOWN</b> <kbd>CTRL</kbd>/<kbd>C</kbd> slide · roll on landing · drop<br>
-      <b>QUICK TURN</b> <kbd>Q</kbd> &nbsp; <b>WALK</b> <kbd>X</kbd> &nbsp; <b>RESTART</b> <kbd>R</kbd><br>
+      <b>QUICK TURN</b> <kbd>Q</kbd> &nbsp; <b>KICK</b> <kbd>F</kbd> &nbsp; <b>RESTART</b> <kbd>R</kbd><br>
       Touch: left thumb moves (push to the edge to sprint), right thumb looks.<br>
       Build speed before gaps — momentum is everything.`);
     this.debug = el('div', { id: 'debug', class: 'hidden' });
+    this.health = el('div', { id: 'health', class: 'hidden' }, '<i></i>');
+    this.hurt = el('div', { id: 'hurt', class: 'layer' });
     this.prompt = el('div', { id: 'prompt', class: 'hidden' }, 'Click to resume');
     this.touchLayer = el('div', { id: 'touch', class: 'hidden' }, `<div class="stick"><i></i></div><button class="tbtn up" aria-label="Up: jump, climb, vault">UP</button><button class="tbtn down" aria-label="Down: slide, roll, drop">DOWN</button><button class="tbtn pause" aria-label="Pause">II</button>`);
     this.hud.append(this.touchLayer);
-    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt);
+    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt, this.health, this.hurt);
     this.menu = el('div', { class: 'layer menu hidden' });
     this.fade = el('div', { id: 'fade', class: 'layer' });
     this.root.append(this.hud, this.menu, this.fade, this.loading);
@@ -96,6 +98,14 @@ export class UI {
     if (split != null) s += `<span class="split ${split <= 0 ? 'ahead' : 'behind'}">${split <= 0 ? '−' : '+'}${Math.abs(split).toFixed(2)}</span>`;
     this.timer.innerHTML = s;
   }
+  health: HTMLElement; hurt: HTMLElement;
+  /** Night Run health bar; null hides it */
+  setHealth(v: number | null) {
+    this.health.classList.toggle('hidden', v == null);
+    if (v != null) { const i = this.health.querySelector('i') as HTMLElement; i.style.width = `${Math.max(0, v)}%`; i.classList.toggle('low', v < 35); }
+  }
+  /** red edge flash when something hits you; fades by itself */
+  flashHurt() { this.hurt.style.transition = 'none'; this.hurt.style.opacity = '1'; void this.hurt.offsetWidth; this.hurt.style.transition = 'opacity .9s'; this.hurt.style.opacity = '0'; }
   setCheckpoints(i: number, n: number, label = '') { this.cp.innerHTML = n ? `${label}<br>${i} / ${n}` : label; }
   setShards(n: number, total: number) { this.shards.innerHTML = `<i></i> ${n} / ${total}`; }
   setSpeed(v: number, flow: number) {
@@ -142,10 +152,11 @@ export class UI {
     return b;
   }
 
-  mainMenu(o: { onFree: () => void; onTrials: () => void; onSettings: () => void; onControls: () => void; shards: string }) {
+  mainMenu(o: { onFree: () => void; onNight: () => void; onTrials: () => void; onSettings: () => void; onControls: () => void; shards: string }) {
     const p = el('div', { class: 'panel' });
     p.append(el('div', { class: 'tag' }), el('h1', {}, 'SKYLINE<br><b>RUNNER</b>'), el('h2', {}, 'First-person freerunning'));
     p.append(this.button('Free Run', o.onFree, 'primary', 'explore the district'));
+    p.append(this.button('Night Run', o.onNight, '', 'survive the infected'));
     p.append(this.button('Time Trials', o.onTrials, '', 'races & ghosts'));
     p.append(this.button('Settings', o.onSettings));
     p.append(this.button('Controls', o.onControls));
@@ -227,6 +238,7 @@ export class UI {
     check('Speed readout', 'showSpeed');
     check('Centre dot', 'reticle');
     check('Runner vision (route marker)', 'runnerVision');
+    check('Night (free run & trials)', 'night');
     p.append(this.button('Back', onBack));
     this.open(p);
   }
@@ -241,6 +253,7 @@ export class UI {
       <span>Up</span><span><kbd>Space</kbd> / <kbd>LMB</kbd> / A · jump, wall-run, wall-climb, climb, vault, pull up</span>
       <span>Down</span><span><kbd>Ctrl</kbd> / <kbd>C</kbd> / <kbd>RMB</kbd> / B · crouch, slide, roll (press just before landing), drop</span>
       <span>Quick turn</span><span><kbd>Q</kbd> / X · also: jump during a wall-climb to spin off</span>
+      <span>Kick</span><span><kbd>F</kbd> / Y · knocks the infected back; running, sliding or in the air it's a dropkick that floors them</span>
       <span>Restart trial</span><span><kbd>R</kbd> / Back</span>
       <span>Pause</span><span><kbd>Esc</kbd> / Start</span>
       <span>Debug overlay</span><span><kbd>F3</kbd></span>`));
