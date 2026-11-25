@@ -63,7 +63,7 @@ export class UI {
       <b>MOVE</b> <kbd>W A S D</kbd> &nbsp; <b>SPRINT</b> <kbd>SHIFT</kbd><br>
       <b>UP</b> <kbd>SPACE</kbd> jump · wall-run · wall-climb · grab · vault<br>
       <b>DOWN</b> <kbd>CTRL</kbd>/<kbd>C</kbd> slide · roll on landing · drop<br>
-      <b>QUICK TURN</b> <kbd>Q</kbd> &nbsp; <b>KICK</b> <kbd>F</kbd> &nbsp; <b>RESTART</b> <kbd>R</kbd><br>
+      <b>QUICK TURN</b> <kbd>Q</kbd> &nbsp; <b>KICK</b> <kbd>F</kbd> &nbsp; <b>GRAPPLE</b> <kbd>E</kbd> &nbsp; <b>RESTART</b> <kbd>R</kbd><br>
       Touch: left thumb moves (push to the edge to sprint), right thumb looks.<br>
       Build speed before gaps — momentum is everything.`);
     this.debug = el('div', { id: 'debug', class: 'hidden' });
@@ -178,7 +178,7 @@ export class UI {
     this.open(p);
   }
 
-  trialsMenu(trials: TrialDef[], save: Save, o: { onRun: (t: TrialDef, ghost: boolean) => void; onReplay: (t: TrialDef) => void; onBack: () => void }) {
+  trialsMenu(trials: TrialDef[], save: Save, o: { onRun: (t: TrialDef, ghost: boolean) => void; onReplay: (t: TrialDef) => void; onShare: (t: TrialDef) => void; onRaceCode: () => void; onBack: () => void }) {
     const p = el('div', { class: 'panel' });
     p.append(el('div', { class: 'tag' }), el('h1', {}, '<b>TIME</b> TRIALS'), el('h2', {}, 'Beat the clock. Race your best ghost.'));
     for (const t of trials) {
@@ -191,10 +191,11 @@ export class UI {
         <span class="medal gold"><i></i>${fmt(t.medals[0])}</span><span class="medal silver"><i></i>${fmt(t.medals[1])}</span><span class="medal bronze"><i></i>${fmt(t.medals[2])}</span>`));
       const row = el('div', { class: 'row' });
       row.append(this.button('Run', () => o.onRun(t, true), 'primary'));
-      if (r.ghost) row.append(this.button('Watch PB', () => o.onReplay(t)));
+      if (r.ghost) row.append(this.button('Watch PB', () => o.onReplay(t)), this.button('Share', () => o.onShare(t), '', 'code'));
       card.append(row);
       p.append(card);
     }
+    p.append(this.button("Race a friend's ghost", o.onRaceCode, '', 'paste a code'));
     p.append(this.button('Back', o.onBack));
     this.open(p);
   }
@@ -254,6 +255,7 @@ export class UI {
     check('Centre dot', 'reticle');
     check('Runner vision (route marker)', 'runnerVision');
     check('Night (free run & trials)', 'night');
+    check('Rain', 'rain');
     check('Slow motion on big jumps', 'slowMo');
     p.append(this.button('Back', onBack));
     this.open(p);
@@ -269,6 +271,7 @@ export class UI {
       <span>Up</span><span><kbd>Space</kbd> / <kbd>LMB</kbd> / A · jump, wall-run, wall-climb, climb, vault, pull up</span>
       <span>Down</span><span><kbd>Ctrl</kbd> / <kbd>C</kbd> / <kbd>RMB</kbd> / B · crouch, slide, roll (press just before landing), drop</span>
       <span>Quick turn</span><span><kbd>Q</kbd> / X · also: jump during a wall-climb to spin off</span>
+      <span>Grapple</span><span><kbd>E</kbd> / <kbd>MMB</kbd> / R3 · aim at a red ring on a tall roof edge (it lights up in range) to reel yourself up; jump to let go early</span>
       <span>Kick</span><span><kbd>F</kbd> / Y · knocks the infected back; running, sliding or in the air it's a dropkick that floors them</span>
       <span>Restart trial</span><span><kbd>R</kbd> / Back</span>
       <span>Pause</span><span><kbd>Esc</kbd> / Start</span>

@@ -21,6 +21,7 @@ export enum PState {
   Traverse = 'traverse', // scripted: vault / mantle / pull-up / step-up
   Pipe = 'pipe',
   Zip = 'zip',
+  Grapple = 'grapple',
   Dead = 'dead',
 }
 
@@ -36,11 +37,12 @@ export interface InputFrame {
   sprint: boolean; walk: boolean;
   quickTurn: boolean;
   kickPressed: boolean;
+  grapplePressed: boolean;
 }
 
 export function emptyInput(): InputFrame {
   return { moveX: 0, moveY: 0, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false,
-    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false };
+    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false };
 }
 
 export type PEvent =
@@ -64,7 +66,9 @@ export type PEvent =
   | { type: 'bump'; speed: number }
   | { type: 'death'; cause: 'fall' | 'void' | 'infected' }
   | { type: 'quickturn' }
-  | { type: 'mantleJump' };
+  | { type: 'mantleJump' }
+  | { type: 'grappleStart' }
+  | { type: 'grappleEnd' };
 
 export interface Ledge {
   y: number; x: number; z: number; nx: number; nz: number;
@@ -119,6 +123,12 @@ function wrapAngle(a: number) { while (a > Math.PI) a -= Math.PI * 2; while (a <
 export class PlayerController {
   world: CollisionWorld;
   ziplines: Zipline[] = [];
+  /** grapple anchor points (red rings on tall roof edges) */
+  anchors: { x: number; y: number; z: number }[] = [];
+  grapple: { x: number; y: number; z: number } | null = null;
+  grappleCD = 0;
+  /** 0 dry .. 1 rain: wet roofs let slides run further */
+  wet = 0;
 
   // kinematic state
   pos = { x: 0, y: 0, z: 0 };
@@ -290,6 +300,7 @@ export class PlayerController {
     if (input.crouchPressed) this.crouchBufferT = 0; else this.crouchBufferT += dt;
     this.coyote = Math.max(0, this.coyote - dt);
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
+    this.grappleCD = Math.max(0, this.grappleCD - dt);
 
     switch (this.state) {
       case PState.Ground: this.updateGround(dt, input); break;
@@ -302,6 +313,7 @@ export class PlayerController {
       case PState.Traverse: this.updateTraverse(dt, input); break;
       case PState.Pipe: this.updatePipe(dt, input); break;
       case PState.Zip: this.updateZip(dt, input); break;
+      case PState.Grapple: this.updateGrapple(dt); break;
       case PState.Dead: this.deadTime += dt; break;
     }
 
@@ -595,7 +607,7 @@ export class PlayerController {
     this.height += (P.H_SLIDE - this.height) * Math.min(1, dt * 18);
     const friction = SURFACE_FRICTION[this.surface] ?? 1;
     let s = this.hSpeed;
-    const decel = P.SLIDE_DECEL * friction + (s < 4 ? 3 : 0);
+    const decel = P.SLIDE_DECEL * friction * (1 - 0.35 * this.wet) + (s < 4 ? 3 : 0);
     s = Math.max(0, s - decel * dt);
     // limited steering
     const w = this.wish(input);
@@ -1246,6 +1258,48 @@ export class PlayerController {
     this.vel.x = dx * h; this.vel.z = dz * h; this.vel.y = vy;
     this.setState(PState.Air); this.airEntrySpeed = h; this.airTime = 0; this.jumpHoldT = 0;
     this.wallCooldown = 0.4; this.fallStartY = this.pos.y;
+  }
+
+  // ---- grappling hook -------------------------------------------------------------------------
+  /** best anchor in view: within 42 m, near the centre of the screen, nothing in the way */
+  grappleTarget(ex: number, ey: number, ez: number, fx: number, fy: number, fz: number) {
+    if (this.grappleCD > 0 || this.state === PState.Dead || this.state === PState.Grapple || this.state === PState.Traverse) return null;
+    let best: { x: number; y: number; z: number } | null = null, bestDot = 0.955;
+    for (const a of this.anchors) {
+      const dx = a.x - ex, dy = a.y - ey, dz = a.z - ez, d = Math.hypot(dx, dy, dz);
+      if (d > 42 || d < 3) continue;
+      const dot = (dx * fx + dy * fy + dz * fz) / d;
+      if (dot <= bestDot) continue;
+      if (this.world.raycast(ex, ey, ez, dx / d, dy / d, dz / d, d - 0.8)) continue;
+      best = a; bestDot = dot;
+    }
+    return best;
+  }
+  startGrapple(a: { x: number; y: number; z: number }) {
+    this.grapple = a;
+    this.height = P.H_STAND;
+    this.setState(PState.Grapple);
+    this.events.push({ type: 'grappleStart' });
+  }
+  private updateGrapple(dt: number) {
+    const a = this.grapple!;
+    const dx = a.x - this.pos.x, dy = a.y - (this.pos.y + 1.2), dz = a.z - this.pos.z, d = Math.hypot(dx, dy, dz);
+    // reel in: speed builds quickly, direction always toward the anchor
+    const along = (this.vel.x * dx + this.vel.y * dy + this.vel.z * dz) / Math.max(d, 1e-3);
+    const sp = Math.min(24, Math.max(along, 8) + 34 * dt);
+    this.vel.x = dx / d * sp; this.vel.y = dy / d * sp; this.vel.z = dz / d * sp;
+    const r = this.move(dt, 0.28);
+    const stalled = this.stateTime > 0.2 && Math.hypot(this.pos.x - this.prevPos.x, this.pos.y - this.prevPos.y, this.pos.z - this.prevPos.z) < sp * dt * 0.25;
+    if (d < 2.2 || this.jumpBuffer > 0 || this.stateTime > 3 || stalled) {
+      // let go with a hop that carries you over the roof edge
+      this.jumpBuffer = 0;
+      this.vel.y = Math.max(this.vel.y, 0) * 0.5 + 5;
+      this.grapple = null; this.grappleCD = 0.6;
+      this.setState(PState.Air); this.airEntrySpeed = Math.max(this.hSpeed, 5); this.airTime = 0; this.fallStartY = this.pos.y;
+      this.events.push({ type: 'grappleEnd' });
+      return;
+    }
+    if (r.grounded && dy < 0.5) { this.ground = r.ground; this.grapple = null; this.setState(PState.Ground); this.grounded = true; this.events.push({ type: 'grappleEnd' }); }
   }
 
   // ---- ziplines -----------------------------------------------------------------------------

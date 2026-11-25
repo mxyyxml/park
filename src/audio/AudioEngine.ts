@@ -85,6 +85,7 @@ export class AudioEngine {
     this.music.setVolume(this.musicVol);
     if (on) this.music.start(); else this.music.stop();
   }
+  setRain(on: boolean) { if (this.loops.rainLoop) this.loops.rainLoop.gain.gain.setTargetAtTime(on ? 0.55 : 0, this.ctx!.currentTime, 0.8); }
   setMusicVolume(v: number) { this.musicVol = v; this.music?.setVolume(v); }
   setVolume(v: number) { this.volume = v; if (this.master) this.master.gain.value = v; }
 
@@ -184,6 +185,7 @@ export class AudioEngine {
     { const lp = BQ.make('lp', 700, 0.7); this.add('windLoop', this.buf(4, (i) => { const x = lp.p(r()); const n = 4 * SR; const f = Math.min(1, Math.min(i, n - i) / 4000); return x * f; })); }
     { let b = 0; this.add('cityLoop', this.buf(6, (i) => { b = b * 0.995 + r() * 0.06; const n = 6 * SR; const f = Math.min(1, Math.min(i, n - i) / 6000); return (b + Math.sin(i / SR * 2 * Math.PI * 55) * 0.02) * f; })); }
     { const bp = BQ.make('bp', 1400, 0.9); this.add('slideLoop', this.buf(2, (i) => { const n = 2 * SR; const f = Math.min(1, Math.min(i, n - i) / 2000); return (bp.p(r()) + r() * 0.15) * f; })); }
+    { const lp = BQ.make('lp', 4200, 0.6), hp = BQ.make('hp', 300, 0.7); this.add('rainLoop', this.buf(3, (i) => { const n = 3 * SR; const f = Math.min(1, Math.min(i, n - i) / 4000); const crackle = r() > 0.9985 ? r() * 4 : 0; return (hp.p(lp.p(r())) + crackle * 0.3) * f; })); }
     { const bp = BQ.make('bp', 1200, 4); this.add('zipLoop', this.buf(2, (i, t) => { const n = 2 * SR; const f = Math.min(1, Math.min(i, n - i) / 2000); return (bp.p(r()) * 0.7 + Math.sin(2 * Math.PI * 930 * t) * 0.2 * (1 + Math.sin(t * 40) * 0.3)) * f; })); }
     { this.add('humLoop', this.buf(2, (i, t) => { const n = 2 * SR; const f = Math.min(1, Math.min(i, n - i) / 2000); return (Math.sin(2 * Math.PI * 120 * t) * 0.5 + Math.sin(2 * Math.PI * 240 * t) * 0.2 + r() * 0.1) * f; })); }
     { const lp = BQ.make('lp', 1800, 0.7); this.add('steamLoop', this.buf(2, (i) => { const n = 2 * SR; const f = Math.min(1, Math.min(i, n - i) / 2000); return lp.p(r()) * f; })); }
@@ -245,6 +247,7 @@ export class AudioEngine {
     mk('cityLoop', this.amb, 'lowpass', 900);
     mk('slideLoop', this.sfx, 'bandpass', 1200);
     mk('zipLoop', this.sfx, 'bandpass', 1500);
+    mk('rainLoop', this.amb, 'lowpass', 5000);
     this.loops.cityLoop.gain.gain.value = 0.55;
   }
 

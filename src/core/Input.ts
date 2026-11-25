@@ -2,14 +2,14 @@ import { emptyInput, InputFrame } from '../player/PlayerController';
 
 export interface Bindings {
   forward: string[]; back: string[]; left: string[]; right: string[];
-  jump: string[]; crouch: string[]; sprint: string[]; walk: string[]; quickTurn: string[]; kick: string[];
+  jump: string[]; crouch: string[]; sprint: string[]; walk: string[]; quickTurn: string[]; kick: string[]; grapple: string[];
   restart: string[]; pause: string[];
 }
 
 export const DEFAULT_BINDINGS: Bindings = {
   forward: ['KeyW', 'ArrowUp'], back: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   jump: ['Space'], crouch: ['ControlLeft', 'KeyC', 'ControlRight'], sprint: ['ShiftLeft', 'ShiftRight'], walk: ['AltLeft', 'KeyX'],
-  quickTurn: ['KeyQ'], kick: ['KeyF'], restart: ['KeyR'], pause: ['Escape', 'KeyP'],
+  quickTurn: ['KeyQ'], kick: ['KeyF'], grapple: ['KeyE'], restart: ['KeyR'], pause: ['Escape', 'KeyP'],
 };
 
 /**
@@ -59,6 +59,7 @@ export class Input {
       this.mouseButtons |= 1 << e.button;
       if (e.button === 0) this.pressedLatch.add('Mouse0');
       if (e.button === 2) this.pressedLatch.add('Mouse2');
+      if (e.button === 1) { this.pressedLatch.add('Mouse1'); e.preventDefault(); }
     });
     window.addEventListener('mouseup', (e) => { this.mouseButtons &= ~(1 << e.button); });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -146,6 +147,7 @@ export class Input {
     f.walk = this.any(this.bind.walk);
     f.quickTurn = this.anyPressed(this.bind.quickTurn);
     f.kickPressed = this.anyPressed(this.bind.kick);
+    f.grapplePressed = this.anyPressed(this.bind.grapple) || this.pressedLatch.has('Mouse1');
     f.lookX = this.lookDX * this.sensitivity;
     f.lookY = -this.lookDY * this.sensitivity * (this.invertY ? -1 : 1);
     this.lookDX = 0; this.lookDY = 0;
@@ -167,7 +169,7 @@ export class Input {
       f.lookY += -curve(ry) * this.gamepadSens * 0.75 * dt * (this.invertY ? -1 : 1);
       const btn = (i: number) => !!gp.buttons[i]?.pressed;
       const pressed = (i: number) => btn(i) && !this.gpPrev[i];
-      // A / LB = jump (up), B / LT / RB = down, L3 = sprint, X = quick turn, Y = kick, Start = pause, Back = restart
+      // A / LB = jump (up), B / LT / RB = down, L3 = sprint, X = quick turn, Y = kick, R3 = grapple, Start = pause, Back = restart
       f.jump ||= btn(0) || btn(4);
       f.jumpPressed ||= pressed(0) || pressed(4);
       f.crouch ||= btn(1) || btn(6) || btn(5);
@@ -175,6 +177,7 @@ export class Input {
       f.sprint ||= btn(10) || btn(7) || Math.hypot(lx, ly) > 0.92;
       f.quickTurn ||= pressed(2);
       f.kickPressed ||= pressed(3);
+      f.grapplePressed ||= pressed(11);
       if (pressed(9)) this.onPausePressed?.();
       if (pressed(8)) this.onRestartPressed?.();
       this.gpPrev = gp.buttons.map((b) => b.pressed);

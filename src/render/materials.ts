@@ -18,6 +18,7 @@ export const fogUniforms = {
   fogHeightFalloff: { value: 0.012 },
   fogDensity: { value: 0.00042 },
   uNight: { value: 0 },  // 0 day .. 1 night: lit windows glow (set by Renderer.setNight)
+  uWet: { value: 0 },    // rain: up-facing surfaces darken and turn glossy (set by Renderer.setRain)
 };
 
 /** shared wind clock for vegetation and flags (advanced by the game loop) */
@@ -101,6 +102,18 @@ function withFog<M extends THREE.Material>(m: M): M {
   m.onBeforeCompile = (shader, r) => {
     Object.assign(shader.uniforms, fogUniforms);
     prev.call(m, shader, r);
+    if (shader.fragmentShader.includes('#include <normal_fragment_maps>') && shader.fragmentShader.includes('#include <roughnessmap_fragment>')) {
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uWet;')
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{
+  // wet: surfaces facing the sky get darker and glossier
+  float upF = smoothstep(0.55, 0.9, dot(normal, normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz)));
+  float w = uWet * upF;
+  roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.25, w);
+  diffuseColor.rgb *= 1.0 - 0.3 * w;
+}`);
+    }
   };
   return m;
 }

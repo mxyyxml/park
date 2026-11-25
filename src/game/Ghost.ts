@@ -5,7 +5,7 @@
 import { PState, TraverseKind, PlayerController } from '../player/PlayerController';
 import type { BodyDriver } from '../player/Body';
 
-const STATES: PState[] = [PState.Ground, PState.Air, PState.Slide, PState.Roll, PState.WallRun, PState.WallClimb, PState.Hang, PState.Traverse, PState.Pipe, PState.Zip, PState.Dead];
+const STATES: PState[] = [PState.Ground, PState.Air, PState.Slide, PState.Roll, PState.WallRun, PState.WallClimb, PState.Hang, PState.Traverse, PState.Pipe, PState.Zip, PState.Dead, PState.Grapple]; // append only: saved ghosts store indices
 const TKINDS: TraverseKind[] = ['speedvault', 'kongvault', 'stepup', 'mantle', 'pullup', 'grab'];
 export const GHOST_HZ = 30;
 const N = 34;
@@ -37,6 +37,26 @@ export function decodeGhost(s: string): Float32Array {
   const b = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
   return new Float32Array(b.buffer);
+}
+
+// ---- shareable ghost codes: "SKR1:<trial id>:<base64 frames>" --------------------------------
+const CODE_PREFIX = 'SKR1';
+export function ghostCode(trialId: string, ghost: string) { return `${CODE_PREFIX}:${trialId}:${ghost}`; }
+
+/** Parse a pasted code. Pasted text is untrusted: check shape, size and every number before use. */
+export function parseGhostCode(text: string, trialIds: string[]): { trialId: string; data: Float32Array } | { error: string } {
+  const s = text.replace(/\s+/g, '');
+  if (s.length > 4_000_000) return { error: 'That code is too long.' };
+  const [prefix, id, b64, extra] = s.split(':');
+  if (prefix !== CODE_PREFIX || !id || !b64 || extra !== undefined) return { error: 'That is not a Skyline Runner ghost code.' };
+  if (!trialIds.includes(id)) return { error: 'That ghost is for a trial this version does not have.' };
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return { error: 'The code is damaged (bad characters).' };
+  let data: Float32Array;
+  try { data = decodeGhost(b64); } catch { return { error: 'The code is damaged.' }; }
+  if (data.length < N * 2 || data.length % N !== 0) return { error: 'The code is damaged (wrong length).' };
+  for (let i = 0; i < data.length; i++) if (!Number.isFinite(data[i]) || Math.abs(data[i]) > 1e5) return { error: 'The code is damaged (bad values).' };
+  for (let i = 5; i < data.length; i += N) if (data[i] < 0 || data[i] >= STATES.length || data[i] !== Math.floor(data[i])) return { error: 'The code is damaged (bad states).' };
+  return { trialId: id, data };
 }
 
 /** A BodyDriver reconstructed from recorded frames at an arbitrary time. */

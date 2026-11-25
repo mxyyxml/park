@@ -13,13 +13,14 @@ export interface Settings {
   runnerVision: boolean;  // highlight next checkpoint route
   autoQuality: boolean;   // lower quality by itself when the frame rate stays low
   night: boolean;
-  slowMo: boolean;        // slow-motion moments on big jumps and takedowns (never in time trials)
+  slowMo: boolean;
+  rain: boolean;          // rain in every mode: wet roofs, longer slides        // slow-motion moments on big jumps and takedowns (never in time trials)
   music: number;          // music volume 0..1         // night lighting in free run and trials (Night Run is always night)
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   quality: 'high', fov: 88, sensitivity: 1, invertY: false, comfort: 0.85, autoTurn: true, volume: 0.8,
-  showSpeed: true, reticle: true, runnerVision: true, autoQuality: true, night: false, slowMo: true, music: 0.5,
+  showSpeed: true, reticle: true, runnerVision: true, autoQuality: true, night: false, slowMo: true, music: 0.5, rain: false,
 };
 
 export interface TrialRecord { best: number | null; splits: number[] | null; ghost: string | null; runs: number }

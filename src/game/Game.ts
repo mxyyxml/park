@@ -16,8 +16,9 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { buildTrials, calibrate, TrialDef } from './Trials';
 import { Horde, InfectedView } from './Infected';
 import { Combo } from './Combo';
+import { Rain } from '../world/Rain';
 import { Bot } from './Bot';
-import { decodeGhost, encodeGhost, GhostPlayback, GhostRecorder } from './Ghost';
+import { decodeGhost, encodeGhost, ghostCode, GhostPlayback, GhostRecorder, parseGhostCode } from './Ghost';
 import { Save, Settings } from './Save';
 import { fmt, UI } from '../ui/UI';
 
@@ -104,6 +105,7 @@ export class Game {
   private kickCD = 0;
   private kills = 0;
   private combo = new Combo();
+  private rain!: Rain;
   private survived = 0;
   private fps = 60; private fpsAcc = 0; private fpsN = 0;
   private debugOn = false;
@@ -205,6 +207,9 @@ export class Game {
     }
     this.save.flush();
 
+    this.buildAnchors();
+    this.rain = new Rain();
+    this.r.scene.add(this.rain.mesh);
     this.horde = new Horde(this.builder.world);
     this.infView = new InfectedView(64);
     this.infView.group.visible = false;
@@ -267,6 +272,7 @@ export class Game {
     this.player.comfortAutoTurn = s.autoTurn;
     this.audio.setVolume(s.volume);
     this.audio.setMusicVolume(s.music);
+    if (this.rain) this.applyWeather();
     this.ui.applySettings(s);
     if (this.r.quality !== s.quality) this.r.applyQuality(s.quality);
   }
@@ -337,6 +343,21 @@ export class Game {
     this.ui.trialsMenu(this.trials, this.save, {
       onRun: (t) => { this.audio.init(); this.startTrial(t, false); },
       onReplay: (t) => { const g = this.save.trial(t.id).ghost; if (g) this.startReplay(decodeGhost(g), () => this.showTrials(), t); },
+      onShare: (t) => {
+        const code = ghostCode(t.id, this.save.trial(t.id).ghost!);
+        const fallback = () => window.prompt('Copy this ghost code and send it to a friend:', code);
+        if (navigator.clipboard) navigator.clipboard.writeText(code).then(() => window.alert(`Ghost code for ${t.name} copied. Send it to a friend; they paste it under "Race a friend's ghost".`), fallback);
+        else fallback();
+      },
+      onRaceCode: () => {
+        const text = window.prompt("Paste a friend's ghost code:");
+        if (!text) return;
+        const r = parseGhostCode(text, this.trials.map((x) => x.id));
+        if ('error' in r) { window.alert(r.error); return; }
+        this.audio.init();
+        this.startTrial(this.trials.find((x) => x.id === r.trialId)!, false, r.data);
+        this.ui.toast("Friend's ghost", 'race the red runner', true, 2.5);
+      },
       onBack: () => this.toMenu(),
     });
   }
@@ -356,6 +377,60 @@ export class Game {
     this.ui.setShards(this.save.data.shards.length, this.city.collectibles.length);
   }
 
+  // ---- grappling hook
+  private anchorMesh!: THREE.InstancedMesh;
+  private rope!: THREE.Line;
+  private aimed: { x: number; y: number; z: number } | null = null;
+  /** red rings just above the middle of each edge of every tall roof */
+  private buildAnchors() {
+    const pts: { x: number; y: number; z: number }[] = [];
+    for (const b of this.city.buildings) {
+      if (b.h < 28 || b.kind === 'skeleton') continue;
+      const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2, y = b.h + 1.6;
+      pts.push({ x: b.minX - 0.15, y, z: cz }, { x: b.maxX + 0.15, y, z: cz }, { x: cx, y, z: b.minZ - 0.15 }, { x: cx, y, z: b.maxZ + 0.15 });
+    }
+    this.player.anchors = pts;
+    const geo = new THREE.TorusGeometry(0.34, 0.06, 8, 20);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff1010, emissiveIntensity: 1.6, roughness: 0.4 });
+    this.anchorMesh = new THREE.InstancedMesh(geo, mat, pts.length);
+    const m = new THREE.Matrix4();
+    pts.forEach((a, i) => this.anchorMesh.setMatrixAt(i, m.makeTranslation(a.x, a.y, a.z)));
+    for (let i = 0; i < pts.length; i++) this.anchorMesh.setColorAt(i, new THREE.Color(1, 1, 1));
+    this.r.scene.add(this.anchorMesh);
+    this.rope = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: 0x222222 }));
+    this.rope.frustumCulled = false; this.rope.visible = false;
+    this.r.scene.add(this.rope);
+  }
+  /** aim highlight, fire on press, draw the rope while reeling in */
+  /** rain setting: visuals, wet shading, sound and slide grip (menus stay dry) */
+  private applyWeather() {
+    const on = this.save.settings.rain && this.mode !== 'attract';
+    this.rain.mesh.visible = on;
+    this.r.setRain(on);
+    this.audio.setRain(on);
+    this.player.wet = on ? 1 : 0;
+  }
+  private updateGrapple(f: { grapplePressed: boolean }) {
+    const p = this.player, cam = this.r.camera;
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const target = p.grappleTarget(cam.position.x, cam.position.y, cam.position.z, fwd.x, fwd.y, fwd.z);
+    if (target !== this.aimed) {
+      const pts = p.anchors, c = new THREE.Color();
+      if (this.aimed) this.anchorMesh.setColorAt(pts.indexOf(this.aimed), c.setRGB(1, 1, 1));
+      if (target) this.anchorMesh.setColorAt(pts.indexOf(target), c.setRGB(3, 3, 3));
+      this.anchorMesh.instanceColor!.needsUpdate = true;
+      this.aimed = target;
+    }
+    if (f.grapplePressed && target) { p.startGrapple(target); this.audio.playUi('whoosh', 0.5); }
+    this.rope.visible = p.state === PState.Grapple && !!p.grapple;
+    if (this.rope.visible) {
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+      const hand = cam.position.clone().addScaledVector(right, 0.25).addScaledVector(fwd, 0.4).add(new THREE.Vector3(0, -0.25, 0));
+      const pos = this.rope.geometry.getAttribute('position') as THREE.BufferAttribute;
+      pos.setXYZ(0, hand.x, hand.y, hand.z); pos.setXYZ(1, p.grapple!.x, p.grapple!.y, p.grapple!.z); pos.needsUpdate = true;
+    }
+  }
+
   /** leave Night Run state; lighting follows the Night setting */
   private setNightRun(on: boolean) {
     this.nightRun = on;
@@ -364,6 +439,7 @@ export class Game {
     this.infView.group.visible = on;
     this.ui.setHealth(on ? 100 : null);
     this.r.setNight(on || (this.save.settings.night && this.mode !== 'attract'));
+    this.applyWeather();
     this.audio.setMusic(this.mode === 'free' || this.mode === 'trial', on);
   }
 
@@ -390,7 +466,11 @@ export class Game {
     else { this.ui.showHelp(true); this.helpT = 8; }
   }
 
-  startTrial(t: TrialDef, instant: boolean) {
+  /** `friendGhost`: race a pasted ghost instead of your own best (kept for restarts of this trial) */
+  private friendGhost: { id: string; data: Float32Array } | null = null;
+  startTrial(t: TrialDef, instant: boolean, friendGhost?: Float32Array) {
+    if (friendGhost) this.friendGhost = { id: t.id, data: friendGhost };
+    else if (!instant || this.friendGhost?.id !== t.id) this.friendGhost = null;
     this.mode = 'trial';
     this.setNightRun(false);
     this.trial = t;
@@ -401,7 +481,7 @@ export class Game {
     this.countdown = instant ? 1.0 : 3.0;
     this.recorder = new GhostRecorder();
     const pb = this.save.trial(t.id);
-    this.raceGhost = pb.ghost ? new GhostPlayback(decodeGhost(pb.ghost)) : null;
+    this.raceGhost = this.friendGhost ? new GhostPlayback(this.friendGhost.data) : pb.ghost ? new GhostPlayback(decodeGhost(pb.ghost)) : null;
     this.ghostBody.setVisible(!!this.raceGhost);
     this.enterPlay();
     this.ui.showHelp(false);
@@ -563,6 +643,7 @@ export class Game {
     else if (this.mode === 'free' || this.mode === 'trial') this.updatePlay(gdt);
 
     this.dynamic.update(gdt, this.r.camera.position);
+    this.rain.update(gdt, this.r.camera.position);
     this.animateShards(dt);
     for (const b of this.cpBeams) (b.material as THREE.ShaderMaterial).uniforms.uTime.value += dt;
     this.r.updateSun(this.r.camera.position);
@@ -579,7 +660,7 @@ export class Game {
     let f = this.input.sample(dt);
     if (this.autopilot) f = this.autopilot.step(p, dt);
     if (this.pendingPress) {
-      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn; f.kickPressed ||= this.pendingPress.kickPressed;
+      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn; f.kickPressed ||= this.pendingPress.kickPressed; f.grapplePressed ||= this.pendingPress.grapplePressed;
       f.lookX += this.pendingPress.lookX; f.lookY += this.pendingPress.lookY;
       this.pendingPress = null;
     }
@@ -591,12 +672,13 @@ export class Game {
       if (this.countdown <= 0) { this.trialRunning = true; this.ui.countdown('GO'); setTimeout(() => this.ui.countdown(''), 500); this.audio.playUi('chime', 0.35); }
       const frozen = emptyInput(); frozen.lookX = f.lookX; frozen.lookY = f.lookY; f = frozen;
     }
+    this.updateGrapple(f);
     // fixed-step simulation
     this.acc += dt;
     let ticks = 0;
     this.frameEvents.length = 0;
     while (this.acc >= DT && ticks < 10) {
-      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, kickPressed: false, lookX: 0, lookY: 0 };
+      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, kickPressed: false, grapplePressed: false, lookX: 0, lookY: 0 };
       p.update(DT, inp);
       for (const e of p.events) this.frameEvents.push(e);
       if (this.trialRunning) { this.trialTime += DT; this.recorder?.record(DT, p); }
