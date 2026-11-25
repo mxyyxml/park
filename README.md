@@ -51,6 +51,8 @@ Tips: zip lines (red posts with a cable) run from high roofs down across streets
 | **Up**: jump, wall-run, wall-climb, grab, vault, pull up | Space / LMB | A / LB |
 | **Down**: crouch, slide, roll (press just before landing), drop | Ctrl / C / RMB | B / LT / RB |
 | Quick turn (and jump during a wall-climb to spin off) | Q | X |
+| Kick (a dropkick when running, sliding or airborne) | F | Y |
+| Grapple to a red ring on a tall roof edge (it lights up in range) | E / middle mouse | R3 |
 | Restart trial | R | Back |
 | Debug overlay | F3 | |
 
@@ -129,7 +131,14 @@ Everything is synthesized at startup:
 - **Free Run** across the whole district, with 12+ hidden **data shards** to collect.
 - **Time Trials**: six routes generated over the level's traversal graph (First Light, Crosstown, Spire Ascent, Crane Line, Pipeworks, Glass Office). They have checkpoints, a countdown, splits against your personal best, gold/silver/bronze medals, and a **ghost** of your best run to race. You can instantly restart or respawn at a checkpoint.
 - **Replays** of any run or PB, with cinematic chase, tracking and fixed cameras, played back at 0.25×, 1× or 2×. The main menu shows an attract mode: the autopilot runs the trials while cinematic cameras follow it.
-- Settings: quality, FOV, sensitivity, invert Y, camera motion, wall-jump assist, volume, HUD toggles. They're saved locally along with times, ghosts and shards.
+- **Night Run** (`Infected.ts`): the city at night, with infected roaming the streets and some rooftops. They notice you on their own level, chase, wind up and strike, and steer around rooftop props. They can't jump gaps or climb, so parkour is the escape. A kick staggers them; a running, sliding or airborne dropkick floors them; one knocked off a roof stays down. You have health that regenerates after 4 s without a hit, and the HUD shows your survival time and takedowns. The dead rise again later, out of sight. The infected and their groans are an original design.
+- **Challenges**: *Shard Rush* (three minutes, every shard back in the city) and *Floor is Lava* (one life, street level kills, score is banked flow points). Best scores are saved.
+- **Flow combos** (`Combo.ts`): vaults, wall-runs, wall-jumps, rolls, ziplines, grapples, kicks and takedowns chained without stopping build points and a multiplier; repeats are worth less. The chain banks when you stop or go 2.5 s without a move, and is lost if you die.
+- **Grappling hook**: red rings on the edges of tall roofs. Aim at one within 42 m and press E to reel yourself up; you let go near the ring with a hop over the edge, or early with jump.
+- **Race a friend's ghost**: *Share* on a trial copies a code with your best run; *Race a friend's ghost* takes a pasted code. Codes are checked before use.
+- **Weather and time**: Night and Rain settings. Rain falls around you, roofs turn dark and glossy, fog thickens and slides run further.
+- **Feel**: speed lines at high speed, slow motion over big drops and on takedowns (never in time trials), and a generated soundtrack whose layers (pad, drums, bass, lead) come in as you speed up, with a darker progression at Night Run.
+- Settings: quality, FOV, sensitivity, invert Y, camera motion, wall-jump assist, volume, music volume, night, rain, slow motion, HUD toggles. They're saved locally along with times, ghosts, shards and challenge bests.
 
 ## Assets
 
@@ -168,7 +177,7 @@ If any asset fails to load, the game falls back to its procedural version.
 
 ## Scope notes
 
-The character is Blender-sculpted by script, not by an artist's hand. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. Clouds come from the sky photo (drifting slowly); they are not volumetric 3D clouds. The terrain is scenery and lies outside the playable district, which stays flat. Audio was not changed in the world overhaul. There's no occlusion culling or mesh LOD beyond decimating the imported models. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.
+The character is Blender-sculpted by script, not by an artist's hand. Lighting uses image-based environment lighting, shadow maps and screen-space AO rather than true global illumination, and reflections use the captured environment map, not ray tracing. The infected are simple capsule-built bodies animated in code, not sculpted or motion-captured, and they only move on the level they stand on. Rain has no splashes or puddle reflections. There are no slopes to power-slide down, because the collision world is made of boxes. Clouds come from the sky photo (drifting slowly); they are not volumetric 3D clouds. The terrain is scenery and lies outside the playable district, which stays flat. Audio was not changed in the world overhaul. There's no occlusion culling or mesh LOD beyond decimating the imported models. Performance has only been measured in a software (SwiftShader) renderer here. Expect much higher frame rates on a real GPU; use the quality presets to scale.
 
 ## Playing offline
 

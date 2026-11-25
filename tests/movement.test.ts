@@ -197,6 +197,23 @@ describe('parkour moves', () => {
     expect(p.pos.x).toBeLessThan(0); // pushed away from the wall
   });
 
+  it('chains wall-runs: jump off one wall into a run along the facing wall', () => {
+    const w = flatWorld();
+    w.add(1.0, 0, -70, 1.6, 6, -8);   // right wall
+    w.add(-4.6, 0, -70, -4.0, 6, -8); // left wall, 5 m across the corridor
+    const p = makePlayer(w, 0.3, 0, 0);
+    let jumps = 0;
+    const r = run(p, 5, (t, q) => {
+      const s: any = { moveY: 1, sprint: true };
+      if (q.pos.z < -9 && q.state === PState.Ground) s.jump = true;
+      if (q.state === PState.WallRun && q.stateTime > 0.45 && jumps < 3) { s.jump = true; jumps++; }
+      return s;
+    });
+    const starts = r.events.filter((e) => e === 'wallrunStart').length;
+    expect(starts).toBeGreaterThanOrEqual(3); // right, left, right
+    expect(r.events.filter((e) => e === 'walljump').length).toBeGreaterThanOrEqual(2);
+  });
+
   it('wall run stays airborne over a gap the player could not jump', () => {
     const w = new CollisionWorld();
     w.add(-6, 0, -20, 6, 10, 0); // roof A

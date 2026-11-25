@@ -332,6 +332,11 @@ export class Game {
     this.ui.mainMenu({
       onFree: () => { this.audio.init(); this.startFree(); },
       onNight: () => { this.audio.init(); this.startNight(); },
+      onChallenges: () => this.ui.challengesMenu(this.save.data.best, {
+        onRush: () => { this.audio.init(); this.startChallenge('rush'); },
+        onLava: () => { this.audio.init(); this.startChallenge('lava'); },
+        onBack: () => this.toMenu(),
+      }),
       onTrials: () => this.showTrials(),
       onSettings: () => this.ui.settingsMenu(this.save.settings, () => { this.applySettings(); this.save.flush(); }, () => this.toMenu()),
       onControls: () => this.ui.controlsMenu(() => this.toMenu()),
@@ -431,8 +436,70 @@ export class Game {
     }
   }
 
+  // ---- challenges
+  private challenge: 'rush' | 'lava' | null = null;
+  private challengeT = 0; private rushCount = 0;
+  private lavaPlane: THREE.Mesh | null = null;
+
+  startChallenge(kind: 'rush' | 'lava') {
+    this.startFree();
+    this.challenge = kind;
+    this.challengeT = kind === 'rush' ? 180 : 0;
+    this.rushCount = 0;
+    if (kind === 'rush') for (const s of this.shardMeshes) s.mesh.visible = true;
+    if (kind === 'lava') {
+      if (!this.lavaPlane) {
+        // glowing street level: a thin emissive sheet just above the asphalt
+        this.lavaPlane = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: 0xff4a10, transparent: true, opacity: 0.55, depthWrite: false }));
+        this.lavaPlane.position.y = 0.12;
+        this.r.scene.add(this.lavaPlane);
+      }
+      this.lavaPlane.visible = true;
+    }
+    this.ui.setCheckpoints(0, 0, kind === 'rush' ? 'SHARD RUSH' : 'FLOOR IS LAVA');
+    this.ui.toast(kind === 'rush' ? 'Shard Rush' : 'Floor is Lava', kind === 'rush' ? '3:00 · find the red shards' : 'one life · stay off the street', true, 3);
+  }
+  private endChallenge() {
+    const kind = this.challenge!;
+    this.combo.bank();
+    const score = kind === 'rush' ? this.rushCount : this.combo.score;
+    const prev = this.save.data.best[kind] ?? 0;
+    if (score > prev) this.save.data.best[kind] = score;
+    this.save.flush();
+    this.stopChallenge();
+    this.paused = true; this.input.unlock(); this.audio.suspend();
+    this.ui.challengeResult({
+      title: kind === 'rush' ? 'SHARD RUSH' : 'FLOOR IS LAVA',
+      score: kind === 'rush' ? `${score} shard${score === 1 ? '' : 's'}` : String(score),
+      best: String(Math.max(prev, score)), isBest: score > prev && score > 0,
+      onRetry: () => { this.audio.resume(); this.startChallenge(kind); },
+      onBack: () => { this.audio.resume(); this.toMenu(); },
+    });
+  }
+  /** back to normal: shards show the saved collection again, no lava */
+  private stopChallenge() {
+    if (this.challenge === 'rush') for (const s of this.shardMeshes) s.mesh.visible = !this.save.data.shards.includes(s.id);
+    if (this.lavaPlane) this.lavaPlane.visible = false;
+    this.challenge = null;
+  }
+  private updateChallenge(dt: number) {
+    const p = this.player;
+    if (this.challenge === 'rush') {
+      this.challengeT -= dt;
+      this.ui.setTimer(Math.max(0, this.challengeT));
+      this.ui.setCheckpoints(0, 0, `SHARD RUSH<br>${this.rushCount} FOUND`);
+      if (this.challengeT <= 0) this.endChallenge();
+    } else if (this.challenge === 'lava') {
+      if (p.state !== PState.Dead) this.challengeT += dt;
+      this.ui.setTimer(this.challengeT);
+      if (p.grounded && p.pos.y < 1.2 && p.state !== PState.Dead) p.die('fall');
+    }
+  }
+
   /** leave Night Run state; lighting follows the Night setting */
   private setNightRun(on: boolean) {
+    if (this.challenge) this.stopChallenge();
     this.nightRun = on;
     this.combo = new Combo();
     this.ui.setCombo(this.mode === 'free' ? this.combo : null);
@@ -706,9 +773,11 @@ export class Game {
     if (p.state === PState.Dead) {
       this.deadT -= dt;
       if (this.deadT < 0.75) this.ui.setFade(1); // black out after the collapse
-      if (this.deadT <= 0) { this.respawn(); this.ui.toast(this.mode === 'trial' ? 'Checkpoint' : 'Respawned', '', false, 1.0); }
+      if (this.deadT <= 0 && this.challenge === 'lava') { this.deadT = 99; this.endChallenge(); }
+      else if (this.deadT <= 0) { this.respawn(); this.ui.toast(this.mode === 'trial' ? 'Checkpoint' : 'Respawned', '', false, 1.0); }
     }
     if (this.nightRun) this.updateNightRun(dt, f);
+    if (this.challenge) this.updateChallenge(dt);
     // camera & body
     this.rig.update(dt, p, alpha);
     this.rig.apply(this.r.camera);
@@ -736,6 +805,7 @@ export class Game {
       if (s.base.distanceToSquared(new THREE.Vector3(p.pos.x, p.pos.y + 1, p.pos.z)) < 1.6 * 1.6) {
         s.mesh.visible = false;
         if (!this.save.data.shards.includes(s.id)) this.save.data.shards.push(s.id);
+        if (this.challenge === 'rush') this.rushCount++;
         this.save.flush();
         this.audio.playUi('collect', 0.45);
         this.ui.toast('Data shard', `${this.save.data.shards.length} / ${this.city.collectibles.length}`, true);

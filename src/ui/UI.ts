@@ -166,12 +166,13 @@ export class UI {
     return b;
   }
 
-  mainMenu(o: { onFree: () => void; onNight: () => void; onTrials: () => void; onSettings: () => void; onControls: () => void; shards: string }) {
+  mainMenu(o: { onFree: () => void; onNight: () => void; onChallenges: () => void; onTrials: () => void; onSettings: () => void; onControls: () => void; shards: string }) {
     const p = el('div', { class: 'panel' });
     p.append(el('div', { class: 'tag' }), el('h1', {}, 'SKYLINE<br><b>RUNNER</b>'), el('h2', {}, 'First-person freerunning'));
     p.append(this.button('Free Run', o.onFree, 'primary', 'explore the district'));
     p.append(this.button('Night Run', o.onNight, '', 'survive the infected'));
     p.append(this.button('Time Trials', o.onTrials, '', 'races & ghosts'));
+    p.append(this.button('Challenges', o.onChallenges, '', 'shard rush · floor is lava'));
     p.append(this.button('Settings', o.onSettings));
     p.append(this.button('Controls', o.onControls));
     p.append(el('div', { class: 'foot' }, `Data shards found: ${o.shards}<br>Mouse + keyboard or gamepad. Click to capture the mouse; Esc pauses.`));
@@ -197,6 +198,30 @@ export class UI {
     }
     p.append(this.button("Race a friend's ghost", o.onRaceCode, '', 'paste a code'));
     p.append(this.button('Back', o.onBack));
+    this.open(p);
+  }
+
+  challengesMenu(best: Record<string, number>, o: { onRush: () => void; onLava: () => void; onBack: () => void }) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, '<b>CHALLENGES</b>'), el('h2', {}, 'One run. Beat your best.'));
+    const card = (name: string, desc: string, bestText: string, run: () => void) => {
+      const c = el('div', { class: 'trial' });
+      c.append(el('div', { class: 't' }, `<strong>${name}</strong><span>${bestText}</span>`), el('p', {}, desc));
+      const row = el('div', { class: 'row' }); row.append(this.button('Play', run, 'primary')); c.append(row);
+      p.append(c);
+    };
+    card('Shard Rush', 'Three minutes. Every data shard is back in the city: grab as many as you can.', best.rush ? `best ${best.rush}` : '—', o.onRush);
+    card('Floor is Lava', 'One life. Touch street level and it is over. Chain moves for flow points; your score is everything you bank.', best.lava ? `best ${best.lava}` : '—', o.onLava);
+    p.append(this.button('Back', o.onBack));
+    this.open(p);
+  }
+
+  challengeResult(o: { title: string; score: string; best: string; isBest: boolean; onRetry: () => void; onBack: () => void }) {
+    const p = el('div', { class: 'panel results' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, o.title), el('div', { class: 'big' }, o.score));
+    if (o.isBest) p.append(el('div', { class: 'pb' }, 'NEW BEST'));
+    p.append(el('div', { class: 'splits' }, `Best: ${o.best}`));
+    const row = el('div', { class: 'row' }); row.append(this.button('Retry', o.onRetry, 'primary'), this.button('Menu', o.onBack)); p.append(row);
     this.open(p);
   }
 

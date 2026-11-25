@@ -27,7 +27,7 @@ export interface TrialRecord { best: number | null; splits: number[] | null; gho
 
 const KEY = 'skyline-runner/v1';
 
-interface SaveData { settings: Settings; trials: Record<string, TrialRecord>; shards: number[]; seenHelp: boolean; calib: Record<string, number> }
+interface SaveData { settings: Settings; trials: Record<string, TrialRecord>; shards: number[]; seenHelp: boolean; calib: Record<string, number>; best: Record<string, number> }
 
 function safeGet(): SaveData | null {
   try { const s = localStorage.getItem(KEY); return s ? JSON.parse(s) : null; } catch { return null; }
@@ -43,6 +43,7 @@ export class Save {
       shards: d?.shards ?? [],
       seenHelp: d?.seenHelp ?? false,
       calib: d?.calib ?? {},
+      best: d?.best ?? {},
     };
   }
   get settings() { return this.data.settings; }
