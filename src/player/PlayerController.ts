@@ -1275,8 +1275,10 @@ export class PlayerController {
   startGrapple(a: { x: number; y: number; z: number; nx: number; ny: number; nz: number }) {
     this.grapple = a;
     this.height = P.H_STAND;
-    // rope from the hands; a little slack taken up so the swing starts at once
-    this.ropeLen = Math.max(2, Math.hypot(a.x - this.pos.x, a.y - (this.pos.y + 1.5), a.z - this.pos.z) * 0.95);
+    // rope from the hands, taken up taut so the arc starts at once
+    this.ropeLen = Math.max(2, Math.hypot(a.x - this.pos.x, a.y - (this.pos.y + 1.5), a.z - this.pos.z) * 0.88);
+    // fired from your feet: hop off the ground into the swing, carrying your run speed
+    if (this.grounded) { this.vel.y = Math.max(this.vel.y, 4.5); this.grounded = false; }
     this.setState(PState.Grapple);
     this.events.push({ type: 'grappleStart' });
   }
@@ -1289,9 +1291,9 @@ export class PlayerController {
   private updateGrapple(dt: number, input: InputFrame) {
     const a = this.grapple!;
     this.vel.y = Math.max(-P.TERMINAL, this.vel.y - P.G * dt);
-    // pump: forward input accelerates along the swing, like leaning into it
+    // pump: lean into the swing along where you look (strong, like kicking your legs on a rope)
     const w = this.wish(input);
-    if (w.mag > 0.05) { this.vel.x += w.x * 5 * dt; this.vel.z += w.z * 5 * dt; }
+    if (w.mag > 0.05) { this.vel.x += w.x * 11 * dt; this.vel.z += w.z * 11 * dt; }
     if (input.grapple) this.ropeLen = Math.max(1.2, this.ropeLen - 9 * dt);
     const dx = this.pos.x - a.x, dy = this.pos.y + 1.5 - a.y, dz = this.pos.z - a.z, d = Math.hypot(dx, dy, dz);
     const nx = dx / d, ny = dy / d, nz = dz / d;
@@ -1301,9 +1303,15 @@ export class PlayerController {
       this.vel.x -= nx * pull; this.vel.y -= ny * pull; this.vel.z -= nz * pull;
     }
     const sp = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
-    if (sp > 28) { this.vel.x *= 28 / sp; this.vel.y *= 28 / sp; this.vel.z *= 28 / sp; }
+    if (sp > 32) { this.vel.x *= 32 / sp; this.vel.y *= 32 / sp; this.vel.z *= 32 / sp; }
     const r = this.move(dt, 0.28);
-    if (this.jumpBuffer > 0 && this.stateTime > 0.1) { this.releaseGrapple(3, 0.15); return; }
+    if (this.jumpBuffer > 0 && this.stateTime > 0.1) {
+      // fling: let go with a boost along the swing and up, so a good release flies far
+      const h = this.hSpeed;
+      if (h > 1) { this.vel.x *= 1.15; this.vel.z *= 1.15; }
+      this.releaseGrapple(4.5, 0.12);
+      return;
+    }
     // reeled right up to the point: hop over the edge (walls) or step onto it (floors)
     if (d < 1.7 && input.grapple) {
       // walls: launch up and in, over the edge onto the top (or into a ledge grab)
@@ -1313,7 +1321,7 @@ export class PlayerController {
     }
     if (this.stateTime > 8) { this.releaseGrapple(0, 0.4); return; }
     // touching down ends the swing; while reeling, brushing a ledge on the way up does not
-    if (r.grounded && this.vel.y <= 0.5 && !input.grapple) {
+    if (r.grounded && this.vel.y <= 0.5 && !input.grapple && this.stateTime > 0.25) {
       this.grapple = null; this.ground = r.ground; this.setState(PState.Ground); this.grounded = true;
       this.events.push({ type: 'grappleEnd' });
     }

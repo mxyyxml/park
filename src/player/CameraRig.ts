@@ -93,6 +93,13 @@ export class CameraRig {
     } else if (st === PState.Hang) eyeT = P.HANG_DROP - 0.32;
     else if (st === PState.WallRun) { rollT += -p.wallSide * 0.2 * c; fovAdd += 3; }
     else if (st === PState.WallClimb) pitchOff += 0.08;
+    else if (st === PState.Grapple) {
+      // swing: lean into the arc (roll with sideways speed), view widens as it speeds up
+      const sp = Math.hypot(p.vel.x, p.vel.y, p.vel.z);
+      fovAdd += clamp(sp / 26, 0, 1) * 12;
+      rollT += -clamp((p.vel.x * p.rightX + p.vel.z * p.rightZ) / 14, -1, 1) * 0.22 * c;
+      pitchOff += clamp(-p.vel.y / 20, -1, 1) * 0.08 * c;
+    }
     else if (st === PState.Zip) { fovAdd += 3 + clamp(p.zipSpeed / 22, 0, 1) * 9; rollT += Math.sin(this.t * 1.7) * (0.02 + p.zipSpeed * 0.001) * c; }
     else if (st === PState.Traverse) {
       const t = p.tProgress;
