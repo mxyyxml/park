@@ -279,6 +279,7 @@ export class Game {
     this.audio.setVolume(s.volume);
     this.audio.setMusicVolume(s.music);
     if (this.rain) this.applyWeather();
+    this.setShadowCasters();
     this.ui.applySettings(s);
     if (this.r.quality !== s.quality) this.r.applyQuality(s.quality);
   }
@@ -575,6 +576,28 @@ export class Game {
       this.ui.setTimer(this.challengeT);
       if (p.grounded && p.pos.y < 1.2 && p.state !== PState.Dead) p.die('fall');
     }
+  }
+
+  /**
+   * Shadow casting costs one extra draw per cascade. Only the playable district casts shadows (the far
+   * skyline's would be lost in the outer cascade anyway, and it's what made towers slow), and small
+   * instanced props (one big draw that can't be culled) cast only on High and Ultra.
+   */
+  private setShadowCasters() {
+    if (!this.city) return;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const b of this.city.buildings) { minX = Math.min(minX, b.minX); maxX = Math.max(maxX, b.maxX); minZ = Math.min(minZ, b.minZ); maxZ = Math.max(maxZ, b.maxZ); }
+    const pad = 30, hiQ = this.r.quality === 'high' || this.r.quality === 'ultra';
+    this.r.scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.userData.shadowFixed) return;
+      if (m.userData.castDefault === undefined) m.userData.castDefault = m.castShadow;
+      if (!m.userData.castDefault) return;
+      if ((m as THREE.InstancedMesh).isInstancedMesh && m.parent?.name !== 'infected') { m.castShadow = hiQ; return; }
+      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+      const c = m.geometry.boundingSphere!.center.clone().applyMatrix4(m.matrixWorld);
+      m.castShadow = c.x > minX - pad && c.x < maxX + pad && c.z > minZ - pad && c.z < maxZ + pad;
+    });
   }
 
   /** leave Night Run state; lighting follows the Night setting */
