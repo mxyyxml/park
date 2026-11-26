@@ -157,4 +157,45 @@ describe('infected', () => {
       expect(ev).toContain('hit');
     });
   });
+
+  describe('weapons and flares', () => {
+    const flat = () => { const w = new CollisionWorld(); w.add(-100, -1, -100, 100, 0, 100); return w; };
+    const KATANA = { range: 2.7, arc: 0.2, dmg: 2, push: 3, floor: false, tankStagger: true };
+    const PIPE = { range: 2.4, arc: 0.45, dmg: 1, push: 11, floor: true, tankStagger: true };
+    it('a katana cuts a runner down in one hit, a walker in two, and swings wide', () => {
+      const h = new Horde(flat());
+      const r = mk('runner', -1.5, 0, -1.5), w = mk('walker', 1.5, 0, -1.5); // both ~45° off centre
+      h.list = [r, w];
+      expect(h.hit(0, 0, 0, 0, KATANA)).toBe(2);
+      expect(r.state).toBe('dead');
+      expect(w.state).toBe('stagger');
+      h.hit(0, 0, 0, 0, KATANA);
+      expect(w.state).toBe('dead');
+      expect(h.deaths).toEqual(['runner', 'walker']);
+    });
+    it('a pipe knocks a walker flat; a mutant only staggers', () => {
+      const h = new Horde(flat());
+      const w = mk('walker', 0, 0, -1.5), m = mk('mutant', 0.6, 0, -1.8);
+      h.list = [w, m];
+      h.hit(0, 0, 0, 0, PIPE);
+      expect(w.state).toBe('down');
+      expect(m.state).toBe('stagger');
+    });
+    it('a flare draws the infected away from you, and they never hit it; up close they still come for you', () => {
+      const h = new Horde(flat());
+      const z = mk('walker', 0, 0, 0);
+      h.list = [z];
+      h.lure = { x: 15, y: 0, z: 0, t: 8 };
+      const ev: string[] = [];
+      for (let i = 0; i < 60 * 6; i++) { h.update(1 / 60, { x: -12, y: 0, z: 0, alive: true }); for (const e of h.events) ev.push(e.type); }
+      expect(z.x).toBeGreaterThan(12);         // went to the flare, not to you at x=-12
+      expect(ev).not.toContain('hit');
+      const h2 = new Horde(flat());
+      const z2 = mk('walker', 0, 0, 0); h2.list = [z2];
+      h2.lure = { x: 15, y: 0, z: 0, t: 8 };
+      const ev2: string[] = [];
+      for (let i = 0; i < 60 * 4; i++) { h2.update(1 / 60, { x: -3, y: 0, z: 0, alive: true }); for (const e of h2.events) ev2.push(e.type); }
+      expect(ev2).toContain('hit');            // you're within 5 m: the flare doesn't save you
+    });
+  });
 });

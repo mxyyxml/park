@@ -2,14 +2,14 @@ import { emptyInput, InputFrame } from '../player/PlayerController';
 
 export interface Bindings {
   forward: string[]; back: string[]; left: string[]; right: string[];
-  jump: string[]; crouch: string[]; sprint: string[]; walk: string[]; quickTurn: string[]; kick: string[]; grapple: string[];
+  jump: string[]; crouch: string[]; sprint: string[]; walk: string[]; quickTurn: string[]; kick: string[]; grapple: string[]; throw: string[];
   restart: string[]; pause: string[];
 }
 
 export const DEFAULT_BINDINGS: Bindings = {
   forward: ['KeyW', 'ArrowUp'], back: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   jump: ['Space'], crouch: ['ControlLeft', 'KeyC', 'ControlRight'], sprint: ['ShiftLeft', 'ShiftRight'], walk: ['AltLeft', 'KeyX'],
-  quickTurn: ['KeyQ'], kick: ['KeyF'], grapple: ['KeyE'], restart: ['KeyR'], pause: ['Escape', 'KeyP'],
+  quickTurn: ['KeyQ'], kick: ['KeyF'], grapple: ['KeyE'], throw: ['KeyG'], restart: ['KeyR'], pause: ['Escape', 'KeyP'],
 };
 
 /**
@@ -147,6 +147,8 @@ export class Input {
     f.walk = this.any(this.bind.walk);
     f.quickTurn = this.anyPressed(this.bind.quickTurn);
     f.kickPressed = this.anyPressed(this.bind.kick);
+    f.throwPressed = this.anyPressed(this.bind.throw);
+    f.weapon = this.anyPressed(['Digit1']) ? 1 : this.anyPressed(['Digit2']) ? 2 : this.anyPressed(['Digit3']) ? 3 : 0;
     f.grapplePressed = this.anyPressed(this.bind.grapple) || this.pressedLatch.has('Mouse1');
     f.grapple = this.any(this.bind.grapple) || !!(this.mouseButtons & 2);
     f.lookX = this.lookDX * this.sensitivity;
@@ -170,7 +172,7 @@ export class Input {
       f.lookY += -curve(ry) * this.gamepadSens * 0.75 * dt * (this.invertY ? -1 : 1);
       const btn = (i: number) => !!gp.buttons[i]?.pressed;
       const pressed = (i: number) => btn(i) && !this.gpPrev[i];
-      // A / LB = jump (up), B / LT / RB = down, L3 = sprint, X = quick turn, Y = kick, R3 = grapple, Start = pause, Back = restart
+      // A / LB = jump (up), B / LT / RB = down, L3 = sprint, X = quick turn, Y = kick, R3 = grapple, D-pad = weapons / flare, Start = pause, Back = restart
       f.jump ||= btn(0) || btn(4);
       f.jumpPressed ||= pressed(0) || pressed(4);
       f.crouch ||= btn(1) || btn(6) || btn(5);
@@ -179,6 +181,8 @@ export class Input {
       f.quickTurn ||= pressed(2);
       f.kickPressed ||= pressed(3);
       f.grapplePressed ||= pressed(11);
+      f.throwPressed ||= pressed(12);                                   // d-pad up: flare
+      if (pressed(14)) f.weapon = 1; if (pressed(13)) f.weapon = 2; if (pressed(15)) f.weapon = 3; // d-pad left/down/right
       f.grapple ||= btn(11);
       if (pressed(9)) this.onPausePressed?.();
       if (pressed(8)) this.onRestartPressed?.();

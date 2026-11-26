@@ -51,7 +51,9 @@ Tips: zip lines (red posts with a cable) run from high roofs down across streets
 | **Up**: jump, wall-run, wall-climb, grab, vault, pull up | Space / LMB | A / LB |
 | **Down**: crouch, slide, roll (press just before landing), drop | Ctrl / C / RMB | B / LT / RB |
 | Quick turn (and jump during a wall-climb to spin off) | Q | X |
-| Kick (a dropkick when running, sliding or airborne) | F | Y |
+| Strike with your weapon, or kick (a dropkick when running, sliding or airborne) | F | Y |
+| Switch weapon: kick / katana / steel pipe | 1 / 2 / 3 | D-pad left / down / right |
+| Throw a flare | G | D-pad up |
 | Grapple: tap to swing, hold to reel in, jump to let go | E / middle mouse | R3 |
 | Restart trial | R | Back |
 | Debug overlay | F3 | |
@@ -133,6 +135,8 @@ Everything is synthesized at startup:
 - **Replays** of any run or PB, with cinematic chase, tracking and fixed cameras, played back at 0.25×, 1× or 2×. The main menu shows an attract mode: the autopilot runs the trials while cinematic cameras follow it.
 - **Ziplines go both ways**: you ride toward the end you're moving or facing toward. Downhill builds speed; uphill the trolley winches you along at a steady 7 m/s.
 - **Map lines**: wall-run billboards over every level wide alley, freestanding wall-run panels on bigger roofs (28 in all), and 18 ziplines, each checked to be rideable by the tests.
+- **Story: Last Signal** (`Story.ts`): an original four-chapter story. The district is sealed after an outbreak; you're Kai, a rooftop courier, and Mara, a dispatcher, talks you through it over the radio (subtitles). *Courier*: reach your stash and take the katana. *Dead Drops*: recover three encrypted data shards. *Nightfall*: the infected come out; grab the supply cache (steel pipe, flares) and climb the Spire. *Last Signal*: hold the relay for 60 s while runners climb over the edge, until the evacuation signal goes out. An objective marker points the way, and progress is saved per chapter.
+- **Weapons** (`Weapons.ts`): **katana** (fast, wide cuts: one hit drops a runner, two a walker), **steel pipe** (slower, knocks walkers and runners flat), and **flares** (thrown; they burn red for 10 s and draw nearby infected away from you unless you're within 5 m). Running, sliding or airborne strikes hit harder. Switch with 1/2/3, strike with F, throw with G. Night Run starts you with the katana, pipe and three flares, plus a flare for every four takedowns.
 - **Night Run** (`Infected.ts`): the city at night, with infected roaming the streets and some rooftops. They notice you on their own level, chase, wind up and strike, and steer around rooftop props. They can't jump gaps or climb, so parkour is the escape. A kick staggers them; a running, sliding or airborne dropkick floors them; one knocked off a roof stays down. You have health that regenerates after 4 s without a hit, and the HUD shows your survival time and takedowns. The dead rise again later, out of sight. There are three original types:
   - **walkers** shamble, take 3 hits and strike after a short wind-up;
   - **runners** are wiry, sprint at 5–6 m/s and strike fast, and they do parkour: they climb walls and ledges up to ~4.6 m, vault obstacles, leap short gaps between roofs and drop down after you (surviving ~6 m falls). A roof isn't always safe, but they go down in 2 hits;

@@ -9,7 +9,7 @@ const MOVES: Record<string, [string, number]> = {
   speedvault: ['Speed vault', 100], kongvault: ['Kong vault', 150], mantle: ['Mantle', 60], pullup: ['Pull-up', 60],
   wallrunStart: ['Wall run', 150], walljump: ['Wall jump', 120], wallclimbStart: ['Wall climb', 80],
   roll: ['Roll', 100], slideStart: ['Slide', 60], zipStart: ['Zipline', 120], mantleJump: ['Mantle jump', 200],
-  pipeGrab: ['Pipe', 60], grab: ['Ledge grab', 60], kick: ['Kick', 80], dropkick: ['Dropkick', 200], takedown: ['Takedown', 300], runnerDown: ['Runner down', 400], mutantDown: ['Mutant down', 1000], grappleStart: ['Grapple', 120],
+  pipeGrab: ['Pipe', 60], grab: ['Ledge grab', 60], kick: ['Kick', 80], dropkick: ['Dropkick', 200], takedown: ['Takedown', 300], runnerDown: ['Runner down', 400], mutantDown: ['Mutant down', 1000], grappleStart: ['Grapple', 120], slash: ['Slash', 100], smash: ['Smash', 120],
 };
 
 export class Combo {

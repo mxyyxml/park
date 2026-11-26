@@ -39,11 +39,13 @@ export interface InputFrame {
   kickPressed: boolean;
   grapplePressed: boolean;
   grapple: boolean; // held: reel the rope in
+  weapon: number;   // 1..3 pressed this frame: switch weapon (0 = none)
+  throwPressed: boolean;
 }
 
 export function emptyInput(): InputFrame {
   return { moveX: 0, moveY: 0, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false,
-    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false, grapple: false };
+    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false, grapple: false, weapon: 0, throwPressed: false };
 }
 
 export type PEvent =

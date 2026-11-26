@@ -16,6 +16,8 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { buildTrials, calibrate, TrialDef } from './Trials';
 import { Horde, InfectedView } from './Infected';
 import { Combo } from './Combo';
+import { Weapons } from './Weapons';
+import { Story, CHAPTERS, type StoryPlaces, type Vec as SVec } from './Story';
 import { Rain } from '../world/Rain';
 import { Bot } from './Bot';
 import { decodeGhost, encodeGhost, ghostCode, GhostPlayback, GhostRecorder, parseGhostCode } from './Ghost';
@@ -107,6 +109,7 @@ export class Game {
   private kills = 0;
   private combo = new Combo();
   private rain!: Rain;
+  private weapons!: Weapons;
   private survived = 0;
   private fps = 60; private fpsAcc = 0; private fpsN = 0;
   private debugOn = false;
@@ -213,6 +216,8 @@ export class Game {
     this.rain = new Rain();
     this.r.scene.add(this.rain.mesh);
     this.horde = new Horde(this.builder.world);
+    this.weapons = new Weapons(this.r.scene, this.r.camera, this.builder.world);
+    this.weapons.setVisible(false);
     this.infView = new InfectedView(64, this.charAssets);
     this.infView.group.visible = false;
     this.r.scene.add(this.infView.group);
@@ -320,6 +325,7 @@ export class Game {
 
   // ---------------------------------------------------------------------------------- flow
   toMenu() {
+    this.endStoryState();
     this.mode = 'attract';
     this.paused = false;
     this.setNightRun(false);
@@ -334,6 +340,10 @@ export class Game {
     this.ui.mainMenu({
       onFree: () => { this.audio.init(); this.startFree(); },
       onNight: () => { this.audio.init(); this.startNight(); },
+      onStory: () => this.ui.storyMenu(this.save.data.storyChapter ?? 0, CHAPTERS, {
+        onPlay: (ch) => { this.audio.init(); this.startStory(ch); },
+        onBack: () => this.toMenu(),
+      }),
       onChallenges: () => this.ui.challengesMenu(this.save.data.best, {
         onRush: () => { this.audio.init(); this.startChallenge('rush'); },
         onLava: () => { this.audio.init(); this.startChallenge('lava'); },
@@ -415,6 +425,105 @@ export class Game {
     }
   }
 
+  // ---- story
+  private story: Story | null = null;
+  private storyObj: { text: string; target: SVec | null } = { text: '', target: null };
+  private pickups: THREE.Object3D[] = [];
+  private storyPlaces(): StoryPlaces {
+    const stash = this.trials[0].checkpoints.at(-1)!;
+    const shards = [...this.city.collectibles].sort((a, b) => Math.hypot(a.x - stash.x, a.z - stash.z) - Math.hypot(b.x - stash.x, b.z - stash.z)).slice(0, 3);
+    const spireTop = this.city.spireRoute.at(-1)!;
+    // the supply cache: the trial checkpoint closest to halfway between the stash and the Spire
+    const mid = { x: (stash.x + spireTop.x) / 2, z: (stash.z + spireTop.z) / 2 };
+    const cps = this.trials.flatMap((t) => t.checkpoints).filter((c) => c.y < 40);
+    const supplies = cps.sort((a, b) => Math.hypot(a.x - mid.x, a.z - mid.z) - Math.hypot(b.x - mid.x, b.z - mid.z))[0];
+    return { stash, shards, supplies, spireTop };
+  }
+  startStory(chapter: number) {
+    this.startFree();
+    this.weapons.reset();
+    // resuming a later chapter: you already found what came before
+    if (chapter >= 1) this.weapons.give('katana');
+    if (chapter >= 3) { this.weapons.give('pipe'); this.weapons.flares = 3; this.weapons.equip('katana'); }
+    const P = this.storyPlaces();
+    const spawnAt = [this.city.spawn, P.stash, P.shards[2], P.spireTop][chapter];
+    this.player.spawn(spawnAt.x, spawnAt.y, spawnAt.z, 'yaw' in spawnAt ? (spawnAt as { yaw: number }).yaw : 0);
+    const spire = this.city.buildings[this.city.special.spire];
+    this.story = new Story(P, {
+      say: (lines) => this.ui.radio(lines),
+      objective: (text, target) => { this.storyObj = { text, target }; this.ui.setCheckpoints(0, 0, `${CHAPTERS[this.story?.chapter ?? chapter].toUpperCase()}<br>${text}`); },
+      give: (item) => {
+        if (item === 'flares') this.weapons.flares += 3; else this.weapons.give(item);
+        this.audio.playUi('collect', 0.5);
+        this.ui.toast(item === 'flares' ? '+3 flares' : item === 'katana' ? 'Katana' : 'Steel pipe', item === 'flares' ? 'G to throw' : 'F to strike · 1/2/3 to switch', true, 2.2);
+        this.ui.setWeapon(this.weapons.label);
+      },
+      night: (on) => {
+        if (on === this.nightRun) return;
+        this.setNightRun(on);
+        if (on) { this.horde.populate(this.city.buildings, this.player.pos); this.hp = 100; }
+      },
+      spawnClimber: () => {
+        // over a random edge of the Spire's top, toward the middle
+        const cx = (spire.minX + spire.maxX) / 2, cz = (spire.minZ + spire.maxZ) / 2, a = Math.random() * Math.PI * 2;
+        const hx = (spire.maxX - spire.minX) / 2, hz = (spire.maxZ - spire.minZ) / 2, k = Math.min(hx / Math.abs(Math.cos(a) || 1e-3), hz / Math.abs(Math.sin(a) || 1e-3));
+        const ex = cx + Math.cos(a) * k * 0.98, ez = cz + Math.sin(a) * k * 0.98, top = this.builder.world.groundHeight(ex - Math.cos(a), ez - Math.sin(a), spire.h + 20, 30);
+        this.horde.addClimber(ex, top ? top.y : spire.h, ez, -Math.cos(a), -Math.sin(a));
+      },
+      end: () => this.storyEnd(),
+    });
+    this.save.data.storyChapter = Math.max(this.save.data.storyChapter ?? 0, chapter); this.save.flush();
+    this.story.start(chapter);
+    this.buildPickups();
+  }
+  /** glowing caches at the stash and the supply point (shown until picked up) */
+  private buildPickups() {
+    for (const o of this.pickups) this.r.scene.remove(o);
+    this.pickups = [];
+    const P = this.storyPlaces();
+    for (const v of [P.stash, P.supplies]) {
+      const g = new THREE.Group();
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.6 }));
+      crate.position.y = 0.25;
+      const lid = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.06, 0.52), new THREE.MeshStandardMaterial({ color: 0xd4141c, emissive: 0xd4141c, emissiveIntensity: 1.5 }));
+      lid.position.y = 0.52;
+      g.add(crate, lid); g.position.set(v.x, v.y, v.z);
+      this.r.scene.add(g); this.pickups.push(g);
+    }
+  }
+  private updateStory(dt: number, f: { kickPressed: boolean; weapon: number; throwPressed: boolean }) {
+    const s = this.story!, p = this.player;
+    // day chapters: weapons still switch and swing (nothing to hit until night)
+    if (!this.nightRun) {
+      if (f.weapon) this.weapons.equip((['kick', 'katana', 'pipe'] as const)[f.weapon - 1]);
+      if (f.kickPressed && this.weapons.equipped !== 'kick' && this.weapons.cd <= 0) { this.weapons.swing(this.horde, p.pos.x, p.pos.y, p.pos.z, p.yaw, false); this.audio.playUi('whoosh', 0.4); }
+      this.weapons.update(dt, null);
+    }
+    s.update(dt, p.pos, p.state !== PState.Dead);
+    // caches disappear once taken
+    if (this.pickups.length === 2) { this.pickups[0].visible = s.chapter === 0; this.pickups[1].visible = s.chapter === 2 && s.step === 0; }
+    for (const o of this.pickups) o.rotation.y += dt;
+    const t = this.storyObj.target;
+    this.pointMarker(t ? new THREE.Vector3(t.x, t.y + 1.2, t.z) : null);
+    if (s.chapter === 3) this.ui.setTimer(null);
+  }
+  private storyEnd() {
+    this.save.data.storyChapter = 0; this.save.data.storyDone = true; this.save.flush();
+    setTimeout(() => {
+      if (!this.story) return;
+      this.paused = true; this.input.unlock(); this.audio.suspend();
+      this.ui.storyEnd({ kills: this.kills, onBack: () => { this.audio.resume(); this.toMenu(); } });
+    }, 6000);
+  }
+  private endStoryState() {
+    if (!this.story) return;
+    this.story = null;
+    for (const o of this.pickups) this.r.scene.remove(o);
+    this.pickups = [];
+    this.ui.radio([]);
+    this.ui.setMarker(0, 0, false, false, 0);
+  }
+
   // ---- challenges
   private challenge: 'rush' | 'lava' | null = null;
   private challengeT = 0; private rushCount = 0;
@@ -480,6 +589,13 @@ export class Game {
   private setNightRun(on: boolean) {
     if (this.challenge) this.stopChallenge();
     this.nightRun = on;
+    // Night Run arms you: katana in hand, pipe on your back, three flares (the story keeps what you found)
+    if (!this.story) {
+      this.weapons.reset();
+      if (on) { this.weapons.give('pipe'); this.weapons.give('katana'); this.weapons.flares = 3; }
+    }
+    this.weapons.setVisible(on || !!this.story);
+    this.ui.setWeapon(on || this.story ? this.weapons.label : null);
     this.combo = new Combo();
     this.ui.setCombo(this.mode === 'free' ? this.combo : null);
     this.infView.group.visible = on;
@@ -500,6 +616,7 @@ export class Game {
 
   startFree() {
     this.mode = 'free';
+    this.endStoryState();
     this.setNightRun(false);
     this.trial = null; this.cpGroup.clear();
     this.ghostBody.setVisible(false);
@@ -515,6 +632,7 @@ export class Game {
   /** `friendGhost`: race a pasted ghost instead of your own best (kept for restarts of this trial) */
   private friendGhost: { id: string; data: Float32Array } | null = null;
   startTrial(t: TrialDef, instant: boolean, friendGhost?: Float32Array) {
+    this.endStoryState();
     if (friendGhost) this.friendGhost = { id: t.id, data: friendGhost };
     else if (!instant || this.friendGhost?.id !== t.id) this.friendGhost = null;
     this.mode = 'trial';
@@ -706,7 +824,7 @@ export class Game {
     let f = this.input.sample(dt);
     if (this.autopilot) f = this.autopilot.step(p, dt);
     if (this.pendingPress) {
-      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn; f.kickPressed ||= this.pendingPress.kickPressed; f.grapplePressed ||= this.pendingPress.grapplePressed;
+      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn; f.kickPressed ||= this.pendingPress.kickPressed; f.grapplePressed ||= this.pendingPress.grapplePressed; f.throwPressed ||= this.pendingPress.throwPressed; f.weapon ||= this.pendingPress.weapon;
       f.lookX += this.pendingPress.lookX; f.lookY += this.pendingPress.lookY;
       this.pendingPress = null;
     }
@@ -724,7 +842,7 @@ export class Game {
     let ticks = 0;
     this.frameEvents.length = 0;
     while (this.acc >= DT && ticks < 10) {
-      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, kickPressed: false, grapplePressed: false, lookX: 0, lookY: 0 };
+      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, kickPressed: false, grapplePressed: false, throwPressed: false, weapon: 0, lookX: 0, lookY: 0 };
       p.update(DT, inp);
       for (const e of p.events) this.frameEvents.push(e);
       if (this.trialRunning) { this.trialTime += DT; this.recorder?.record(DT, p); }
@@ -757,6 +875,7 @@ export class Game {
     }
     if (this.nightRun) this.updateNightRun(dt, f);
     if (this.challenge) this.updateChallenge(dt);
+    if (this.story) this.updateStory(dt, f);
     // camera & body
     this.rig.update(dt, p, alpha);
     this.rig.apply(this.r.camera);
@@ -799,7 +918,7 @@ export class Game {
       this.splitShowT -= dt;
       this.ui.setTimer(this.trialTime, split);
       this.updateMarker();
-    } else this.ui.setMarker(0, 0, false, false, 0);
+    } else if (!this.story) this.ui.setMarker(0, 0, false, false, 0); // the story points its own marker
     if (this.helpT > 0) { this.helpT -= dt; if (this.helpT <= 0 || (this.mode === 'free' && p.hSpeed > 1 && this.helpT < 14)) { if (this.helpT <= 0) this.ui.fadeHelp(); } }
   }
   private splitShowT = 0;
@@ -811,13 +930,27 @@ export class Game {
     this.slowScale = scale; this.slowMoT = Math.max(this.slowMoT, secs);
   }
 
-  private updateNightRun(dt: number, f: { kickPressed: boolean }) {
+  private updateNightRun(dt: number, f: { kickPressed: boolean; weapon: number; throwPressed: boolean }) {
     const p = this.player, alive = p.state !== PState.Dead;
+    const W = this.weapons;
+    // weapons: 1 kick, 2 katana, 3 pipe; F strikes with what you hold; G throws a flare
+    if (f.weapon) W.equip((['kick', 'katana', 'pipe'] as const)[f.weapon - 1]);
+    if (f.throwPressed && alive) {
+      const cam = this.r.camera, dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+      if (W.throwFlare(cam.position, dir)) this.audio.playUi('whoosh', 0.4); else this.ui.toast('No flares', '', true, 0.8);
+    }
+    const air = !p.grounded || p.state === PState.Slide;
+    if (f.kickPressed && W.equipped !== 'kick' && W.cd <= 0 && alive) {
+      const hits = W.swing(this.horde, p.pos.x, p.pos.y, p.pos.z, p.yaw, air);
+      this.audio.playUi('whoosh', 0.5);
+      if (hits) { this.audio.playFx('kick', 0.8); this.rig.onEvents([{ type: 'bump', speed: 4 }]); this.combo.add(W.equipped === 'katana' ? 'slash' : 'smash'); this.slowMo(0.3, 0.1); }
+    }
+    W.update(dt, this.horde);
+    this.ui.setWeapon(W.label);
     // kick: a dropkick when running fast, sliding or airborne
     this.kickCD -= dt;
-    if (f.kickPressed && this.kickCD <= 0 && alive) {
+    if (f.kickPressed && W.equipped === 'kick' && this.kickCD <= 0 && alive) {
       this.kickCD = 0.55;
-      const air = !p.grounded || p.state === PState.Slide;
       const power = (8 + p.hSpeed * 0.6) * (air ? 1.5 : 1);
       const hits = this.horde.kick(p.pos.x, p.pos.y, p.pos.z, p.yaw, power);
       this.rig.onEvents([{ type: 'bump', speed: 4 }]);
@@ -828,6 +961,7 @@ export class Game {
     this.horde.update(dt, { x: p.pos.x, y: p.pos.y, z: p.pos.z, alive });
     for (const kind of this.horde.deaths) {
       this.kills++;
+      if (this.kills % 4 === 0) { W.flares++; this.ui.toast('+1 flare', '', false, 0.8); }
       this.combo.add(kind === 'mutant' ? 'mutantDown' : kind === 'runner' ? 'runnerDown' : 'takedown');
       if (kind === 'mutant') { this.ui.toast('Mutant down', '', true, 1.2); this.slowMo(0.2, 0.8); }
       else this.slowMo(0.25, 0.4);
@@ -850,8 +984,10 @@ export class Game {
     if (alive && this.sinceHit > 4) this.hp = Math.min(100, this.hp + 12 * dt);
     if (alive) this.survived += dt;
     this.ui.setHealth(this.hp);
-    this.ui.setTimer(this.survived);
-    this.ui.setCheckpoints(0, 0, `NIGHT RUN<br>${this.kills} DOWN`);
+    if (!this.story) {
+      this.ui.setTimer(this.survived);
+      this.ui.setCheckpoints(0, 0, `NIGHT RUN<br>${this.kills} DOWN`);
+    }
     this.infView.update(this.horde.list, this.survived);
   }
 
@@ -882,8 +1018,13 @@ export class Game {
       this.cpBeams[i].visible = i >= this.cpIndex && i <= this.cpIndex + 1;
     }
     if (!c || !this.save.settings.runnerVision) { this.ui.setMarker(0, 0, false, false, 0); return; }
+    this.pointMarker(new THREE.Vector3(c.x, c.y + 1.2, c.z));
+  }
+
+  /** on-screen marker for a world point (clamped to the screen edge when off-screen); null hides it */
+  private pointMarker(v: THREE.Vector3 | null) {
+    if (!v) { this.ui.setMarker(0, 0, false, false, 0); return; }
     const cam = this.r.camera;
-    const v = new THREE.Vector3(c.x, c.y + 1.2, c.z);
     const dist = v.distanceTo(cam.position);
     v.project(cam);
     const w = window.innerWidth, h = window.innerHeight;

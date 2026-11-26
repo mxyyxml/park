@@ -68,12 +68,14 @@ export class UI {
       Build speed before gaps — momentum is everything.`);
     this.debug = el('div', { id: 'debug', class: 'hidden' });
     this.health = el('div', { id: 'health', class: 'hidden' }, '<i></i>');
+    this.weaponEl = el('div', { id: 'weapon', class: 'hidden' });
+    this.radioEl = el('div', { id: 'radio', class: 'hidden' });
     this.comboEl = el('div', { id: 'combo', class: 'hidden' }, '<div class="move"></div><div class="chain"></div><div class="score"></div>');
     this.hurt = el('div', { id: 'hurt', class: 'layer' });
     this.prompt = el('div', { id: 'prompt', class: 'hidden' }, 'Click to resume');
     this.touchLayer = el('div', { id: 'touch', class: 'hidden' }, `<div class="stick"><i></i></div><button class="tbtn up" aria-label="Up: jump, climb, vault">UP</button><button class="tbtn down" aria-label="Down: slide, roll, drop">DOWN</button><button class="tbtn pause" aria-label="Pause">II</button>`);
     this.hud.append(this.touchLayer);
-    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt, this.health, this.hurt, this.comboEl);
+    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt, this.health, this.hurt, this.comboEl, this.weaponEl, this.radioEl);
     this.menu = el('div', { class: 'layer menu hidden' });
     this.fade = el('div', { id: 'fade', class: 'layer' });
     this.root.append(this.hud, this.menu, this.fade, this.loading);
@@ -99,7 +101,45 @@ export class UI {
     if (split != null) s += `<span class="split ${split <= 0 ? 'ahead' : 'behind'}">${split <= 0 ? '−' : '+'}${Math.abs(split).toFixed(2)}</span>`;
     this.timer.innerHTML = s;
   }
-  health: HTMLElement; hurt: HTMLElement; comboEl: HTMLElement;
+  health: HTMLElement; hurt: HTMLElement; comboEl: HTMLElement; weaponEl: HTMLElement;
+  radioEl: HTMLElement;
+  private radioQ: { who: string; text: string }[] = []; private radioTimer = 0;
+  /** radio subtitles: lines queue up and each stays long enough to read; [] clears */
+  radio(lines: { who: string; text: string }[]) {
+    if (!lines.length) { this.radioQ = []; clearTimeout(this.radioTimer); this.radioEl.classList.add('hidden'); return; }
+    const idle = !this.radioQ.length;
+    this.radioQ.push(...lines);
+    if (idle) this.nextRadio();
+  }
+  private nextRadio() {
+    const l = this.radioQ[0];
+    if (!l) { this.radioEl.classList.add('hidden'); return; }
+    this.radioEl.innerHTML = `<b class="${l.who === 'KAI' ? 'kai' : ''}">${l.who}</b> ${l.text}`;
+    this.radioEl.classList.remove('hidden');
+    this.radioTimer = window.setTimeout(() => { this.radioQ.shift(); this.nextRadio(); }, 2200 + l.text.length * 45);
+  }
+
+  storyMenu(chapter: number, chapters: string[], o: { onPlay: (ch: number) => void; onBack: () => void }) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, 'LAST<br><b>SIGNAL</b>'), el('h2', {}, 'A story in four chapters'));
+    p.append(el('div', { class: 'foot' }, 'The district is sealed. You are Kai, a rooftop courier. Carry the evacuation plan to the relay on top of the Spire before the night takes the streets.'));
+    if (chapter > 0) p.append(this.button(`Continue`, () => o.onPlay(chapter), 'primary', `chapter ${chapter + 1}: ${chapters[chapter]}`));
+    p.append(this.button(chapter > 0 ? 'New story' : 'Begin', () => o.onPlay(0), chapter > 0 ? '' : 'primary', `chapter 1: ${chapters[0]}`));
+    for (let i = 1; i <= chapter; i++) p.append(this.button(`Chapter ${i + 1}`, () => o.onPlay(i), '', chapters[i]));
+    p.append(this.button('Back', o.onBack));
+    this.open(p);
+  }
+
+  storyEnd(o: { kills: number; onBack: () => void }) {
+    const p = el('div', { class: 'panel results' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, 'SIGNAL<br><b>SENT</b>'));
+    p.append(el('div', { class: 'foot' }, `The broadcast went out over the district at dawn. The helicopters landed on the roofs, and the people who had held out up there for three days came out to meet them.<br><br>Infected you put down tonight: ${o.kills}<br><br>LAST SIGNAL · thanks for playing`));
+    p.append(this.button('Main menu', o.onBack, 'primary'));
+    this.open(p);
+  }
+
+  /** held weapon and flares, bottom right; null hides it */
+  setWeapon(text: string | null) { this.weaponEl.classList.toggle('hidden', text == null); if (text != null && this.weaponEl.textContent !== text) this.weaponEl.textContent = text; }
   private bankT = 0; private lastBanked = 0;
   /** flow combo: current move, chain points x multiplier, total score; null hides it */
   setCombo(c: { label: string; labelT: number; chain: number; pending: number; mult: number; score: number; banked: number } | null) {
@@ -166,10 +206,11 @@ export class UI {
     return b;
   }
 
-  mainMenu(o: { onFree: () => void; onNight: () => void; onChallenges: () => void; onTrials: () => void; onSettings: () => void; onControls: () => void; shards: string }) {
+  mainMenu(o: { onFree: () => void; onStory: () => void; onNight: () => void; onChallenges: () => void; onTrials: () => void; onSettings: () => void; onControls: () => void; shards: string }) {
     const p = el('div', { class: 'panel' });
     p.append(el('div', { class: 'tag' }), el('h1', {}, 'SKYLINE<br><b>RUNNER</b>'), el('h2', {}, 'First-person freerunning'));
-    p.append(this.button('Free Run', o.onFree, 'primary', 'explore the district'));
+    p.append(this.button('Story', o.onStory, 'primary', 'last signal'));
+    p.append(this.button('Free Run', o.onFree, '', 'explore the district'));
     p.append(this.button('Night Run', o.onNight, '', 'survive the infected'));
     p.append(this.button('Time Trials', o.onTrials, '', 'races & ghosts'));
     p.append(this.button('Challenges', o.onChallenges, '', 'shard rush · floor is lava'));
@@ -297,6 +338,8 @@ export class UI {
       <span>Down</span><span><kbd>Ctrl</kbd> / <kbd>C</kbd> / <kbd>RMB</kbd> / B · crouch, slide, roll (press just before landing), drop</span>
       <span>Quick turn</span><span><kbd>Q</kbd> / X · also: jump during a wall-climb to spin off</span>
       <span>Grapple</span><span><kbd>E</kbd> / <kbd>MMB</kbd> / R3 · aim at a red ring on a tall roof edge (it lights up in range) to reel yourself up; jump to let go early</span>
+      <span>Weapons</span><span><kbd>1</kbd> kick · <kbd>2</kbd> katana · <kbd>3</kbd> steel pipe / D-pad · strike with <kbd>F</kbd> / Y</span>
+      <span>Flare</span><span><kbd>G</kbd> / D-pad up · throw: it burns red and lures nearby infected away from you</span>
       <span>Kick</span><span><kbd>F</kbd> / Y · knocks the infected back; running, sliding or in the air it's a dropkick that floors them</span>
       <span>Restart trial</span><span><kbd>R</kbd> / Back</span>
       <span>Pause</span><span><kbd>Esc</kbd> / Start</span>

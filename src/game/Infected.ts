@@ -113,9 +113,14 @@ export class Horde {
     return yaw;
   }
 
-  update(dt: number, p: Target) {
+  update(dt: number, player: Target) {
     this.events.length = 0;
+    const L = this.lure;
+    if (L && (L.t -= dt) <= 0) this.lure = null;
     for (const z of this.list) {
+      const pd = Math.hypot(player.x - z.x, player.z - z.z);
+      const lured = !!L && L.t > 0 && pd > 5 && Math.hypot(L.x - z.x, L.z - z.z) < 30 && Math.abs(L.y - z.y) < LEVEL;
+      const p = lured ? { x: L!.x, y: L!.y, z: L!.z, alive: true } : player;
       const dx = p.x - z.x, dz = p.z - z.z, dist = Math.hypot(dx, dz), dy = p.y - z.y;
       // the dead rise again at their post, out of the runner's sight
       if (z.state === 'dead' && z.t > 25 && Math.hypot(p.x - z.hx, p.z - z.hz) > 60) {
@@ -173,6 +178,7 @@ export class Horde {
             this.events.push({ type: 'groan', x: z.x, y: z.y + 1.6, z: z.z, kind: z.kind });
             break;
           }
+          if (lured && dist < 2.2) { z.gait -= dt * sp * 2.6; z.yaw += Math.sin(z.t * 2 + z.seed * 9) * dt; break; } // milling round the flare
           if (dist < REACH * K.scale) { z.state = 'windup'; z.t = 0; }
           break;
         }
@@ -190,7 +196,7 @@ export class Horde {
           if (z.t < 0.7) { z.yaw = turn(z.yaw, Math.atan2(-dx, -dz), dt * 4); z.cdx = -Math.sin(z.yaw); z.cdz = -Math.cos(z.yaw); break; }
           const moved = this.move(z, z.cdx * 9 * dt, z.cdz * 9 * dt, true);
           z.gait += dt * 20;
-          if (dist < HIT_RANGE * 1.1 && Math.abs(dy) < LEVEL && p.alive) {
+          if (!lured && dist < HIT_RANGE * 1.1 && Math.abs(dy) < LEVEL && p.alive) {
             this.events.push({ type: 'hit', dmg: K.dmg, knock: 14, fromX: z.x, fromZ: z.z });
             z.state = 'recover'; z.t = -0.5;
           } else if (moved < 9 * dt * 0.3 || z.t > 1.8) { z.state = 'stagger'; z.t = 0; } // hit a wall or ran out
@@ -199,7 +205,7 @@ export class Horde {
         case 'windup':
           z.yaw = turn(z.yaw, Math.atan2(-dx, -dz), dt * 6);
           if (z.t > K.windup) {
-            if (dist < HIT_RANGE * K.scale && Math.abs(dy) < LEVEL && p.alive) this.events.push({ type: 'hit', dmg: K.dmg, knock: K.knock, fromX: z.x, fromZ: z.z });
+            if (!lured && dist < HIT_RANGE * K.scale && Math.abs(dy) < LEVEL && p.alive) this.events.push({ type: 'hit', dmg: K.dmg, knock: K.knock, fromX: z.x, fromZ: z.z });
             z.state = 'recover'; z.t = 0;
           }
           break;
@@ -237,24 +243,43 @@ export class Horde {
 
   /** Runner's kick: everything in a short cone in front is knocked back. Returns how many were hit. */
   kick(px: number, py: number, pz: number, yaw: number, power: number): number {
+    return this.hit(px, py, pz, yaw, { range: 2.4, arc: 0.45, dmg: power >= 12 ? 2 : 1, push: power, floor: power >= 12, tankStagger: power >= 12 });
+  }
+
+  /**
+   * A melee strike in a cone in front of the runner. `arc` is the cosine of the half-angle,
+   * `floor` knocks walkers/runners down (else they stagger); mutants only stagger if `tankStagger`.
+   */
+  hit(px: number, py: number, pz: number, yaw: number, w: { range: number; arc: number; dmg: number; push: number; floor: boolean; tankStagger: boolean }): number {
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
     let n = 0;
     for (const z of this.list) {
       if (z.state === 'dead' || z.falling) continue;
       const dx = z.x - px, dz = z.z - pz, d = Math.hypot(dx, dz);
-      if (d > 2.4 || Math.abs(z.y - py) > LEVEL || (d > 0.4 && (dx * fx + dz * fz) / d < 0.45)) continue;
+      if (d > w.range || Math.abs(z.y - py) > LEVEL || (d > 0.4 && (dx * fx + dz * fz) / d < w.arc)) continue;
       n++;
-      z.hp -= power >= 12 ? 2 : 1;
-      // mutants barely budge: only a dropkick staggers them and they never go down from a kick
+      z.hp -= w.dmg;
       const tank = z.kind === 'mutant';
-      const push = tank ? power * 0.3 : power;
+      const push = tank ? w.push * 0.3 : w.push;
       z.vx = fx * push; z.vz = fz * push;
       if (z.hp <= 0) { z.state = 'dead'; this.deaths.push(z.kind); }
-      else if (tank) { if (power >= 12) z.state = 'stagger'; else continue; }
-      else z.state = power >= 12 ? 'down' : 'stagger';
+      else if (tank) { if (w.tankStagger) z.state = 'stagger'; else continue; }
+      else z.state = w.floor ? 'down' : 'stagger';
       z.t = 0;
     }
     return n;
+  }
+
+  /** a burning flare: infected nearby on its level go to it instead of you (unless you're right there) */
+  lure: { x: number; y: number; z: number; t: number } | null = null;
+
+  /** a runner coming up over an edge at (ex, ey, ez): starts below it on the outside, ends on top facing in */
+  addClimber(ex: number, ey: number, ez: number, inX: number, inZ: number) {
+    const sx = ex - inX * 0.6, sz = ez - inZ * 0.6;
+    const k = KINDS.runner;
+    this.list.push({ kind: 'runner', chargeCD: 0, cdx: 0, cdz: 0, hx: sx, hy: ey, hz: sz, x: sx, y: ey - 4, z: sz, vx: 0, vy: 0, vz: 0,
+      yaw: Math.atan2(-inX, -inZ), hp: k.hp, state: 'climb', t: 0, gait: 0, speed: k.speed[1], falling: false, seed: Math.random(), groanT: 1,
+      wanderYaw: 0, detour: 0, detourT: 0, climb: { sx, sy: ey - 4, sz, tx: ex + inX * 0.9, ty: ey, tz: ez + inZ * 0.9, dur: 0.9 } });
   }
 
   /** after a respawn, nothing is waiting right on top of the runner */
