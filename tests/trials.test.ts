@@ -10,7 +10,7 @@ const DT = 1 / 120;
 describe('time trials are completable by the autopilot using the real physics', () => {
   const b = new WorldBuilder(false);
   const city = buildCity(b);
-  const trials = buildTrials(city, b.world);
+  const trials = buildTrials(city, b.world, b.ziplines);
   it('generates trials', () => {
     console.log(trials.map((t) => `${t.id}: ${t.checkpoints.length} cps, ${t.wps.length} wps, ${t.length.toFixed(0)} m, gold ${t.medals[0]}s`).join('\n'));
     expect(trials.length).toBeGreaterThanOrEqual(5);

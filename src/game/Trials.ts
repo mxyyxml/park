@@ -1,7 +1,8 @@
 import { PlayerController, PState } from '../player/PlayerController';
 import { Bot } from './Bot';
 import type { CollisionWorld } from '../physics/collision';
-import type { CityInfo, Edge } from '../world/city';
+import { COLS, type CityInfo, type Edge } from '../world/city';
+import type { Zipline } from '../player/PlayerController';
 
 export interface Checkpoint { x: number; y: number; z: number; r: number }
 export interface TrialDef {
@@ -133,10 +134,14 @@ function trialFromPath(city: CityInfo, world: CollisionWorld, id: string, name: 
   };
 }
 
-export function buildTrials(city: CityInfo, world: CollisionWorld): TrialDef[] {
+export function buildTrials(city: CityInfo, world: CollisionWorld, ziplines: Zipline[] = []): TrialDef[] {
   const B = city.buildings;
   const trials: TrialDef[] = [];
-  const inBlock = (i: number, j: number) => B.filter((b) => b.block === j * 4 + i && b.kind !== 'spire');
+  const inBlock = (i: number, j: number) => B.filter((b) => b.block === j * COLS + i && b.kind !== 'spire');
+  /** buildings in the blocks around building `bi` (its own block and the 4 neighbours) */
+  const around = (bi: number) => { const k = B[bi].block, i = k % COLS, j = Math.floor(k / COLS); return [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].flatMap(([di, dj]) => inBlock(i + di, j + dj)).map((b) => b.id); };
+  // keep a route only if the autopilot can actually run it with the real physics (else try the next one)
+  const accept = (t: TrialDef) => { const ok = calibrate(t, world, ziplines) != null; if (ok) trials.push(t); return ok; };
   const farthest = (from: number, cands: number[]) => {
     const f = B[from];
     return cands.map((c) => ({ c, d: Math.hypot((B[c].minX + B[c].maxX) / 2 - (f.minX + f.maxX) / 2, (B[c].minZ + B[c].maxZ) / 2 - (f.minZ + f.maxZ) / 2) }))
@@ -146,36 +151,33 @@ export function buildTrials(city: CityInfo, world: CollisionWorld): TrialDef[] {
     for (const t of targets) {
       if (t === from) continue;
       const p = route(city, from, t);
-      if (p && p.length >= minLen) { trials.push(trialFromPath(city, world, id, name, desc, p, startAt)); return true; }
+      if (p && p.length >= minLen && accept(trialFromPath(city, world, id, name, desc, p, startAt))) return true;
     }
     return false;
   };
   const spawnB = city.special.spawn;
   // 1. warm-up inside the starting block
   tryMake('first-light', 'First Light', 'A warm-up across the rooftops of the starting block. Learn to carry speed through gaps.',
-    spawnB, farthest(spawnB, inBlock(0, 1).map((b) => b.id)), 2, { x: city.spawn.x, z: city.spawn.z });
+    spawnB, farthest(spawnB, inBlock(0, 1).concat(inBlock(1, 1)).map((b) => b.id)), 3, { x: city.spawn.x, z: city.spawn.z });
   // 2. crosstown: west to east across the district
-  tryMake('crosstown', 'Crosstown', 'From the west residential blocks to the eastern edge, crossing three streets by bridge and zipline.',
-    spawnB, farthest(spawnB, inBlock(3, 1).concat(inBlock(3, 0), inBlock(3, 2)).map((b) => b.id)), 4, { x: city.spawn.x, z: city.spawn.z });
+  const E = COLS - 1;
+  tryMake('crosstown', 'Crosstown', 'From the west residential blocks to the eastern edge, crossing the streets by bridge and zipline.',
+    spawnB, farthest(spawnB, inBlock(E, 1).concat(inBlock(E, 0), inBlock(E, 2), inBlock(E - 1, 1)).map((b) => b.id)), 4, { x: city.spawn.x, z: city.spawn.z });
   // 3. spire ascent
   const spire = city.special.spire;
-  const spireStart = city.edges.find((e) => e.kind === 'route' && e.b === spire);
-  if (spireStart) {
+  for (const spireStart of city.edges.filter((e) => e.kind === 'route' && e.b === spire)) {
     const p = route(city, spawnB, spireStart.a);
-    if (p) {
-      const path = [...p, spireStart];
-      trials.push(trialFromPath(city, world, 'spire', 'Spire Ascent', 'Reach the spire and climb its spiral of platforms to the antenna at 78 m.', path, { x: city.spawn.x, z: city.spawn.z }));
-    }
+    if (p && accept(trialFromPath(city, world, 'spire', 'Spire Ascent', 'Reach the spire and climb its spiral of platforms to the antenna at 78 m.', [...p, spireStart], { x: city.spawn.x, z: city.spawn.z }))) break;
   }
   // 4. crane line
   const crane = city.edges.find((e) => e.kind === 'crane');
   if (crane) {
     const fromB = B[crane.a];
     const start = { x: (fromB.minX + fromB.maxX) / 2, z: (fromB.minZ + fromB.maxZ) / 2 };
-    const after = farthest(crane.b, inBlock(1, 2).map((b) => b.id));
+    const after = farthest(crane.b, around(crane.b));
     for (const t of [crane.b, ...after].reverse()) {
       const rest = t === crane.b ? [] : route(city, crane.b, t);
-      if (rest) { trials.push(trialFromPath(city, world, 'crane', 'Crane Line', 'Climb the construction site, walk the tower-crane jib across the street and drop onto the roofs beyond.', [crane, ...rest], start)); break; }
+      if (rest && accept(trialFromPath(city, world, 'crane', 'Crane Line', 'Climb the construction site, walk the tower-crane jib across the street and drop onto the roofs beyond.', [crane, ...rest], start))) break;
     }
   }
   // 5. industrial
@@ -188,10 +190,10 @@ export function buildTrials(city: CityInfo, world: CollisionWorld): TrialDef[] {
   const atr = city.special.atrium;
   const toAtr = route(city, spawnB, atr);
   if (toAtr) {
-    const exits = farthest(atr, inBlock(1, 1).concat(inBlock(2, 0)).map((b) => b.id)).filter((x) => x !== atr);
+    const exits = farthest(atr, around(atr)).filter((x) => x !== atr);
     for (const ex of exits) {
       const out = route(city, atr, ex, new Set(toAtr.map((e) => e.a)));
-      if (out && out.length >= 1) { trials.push(trialFromPath(city, world, 'atrium', 'Glass Office', 'Break through the gutted office floor — vault desks, slide under ducts, wall-run the glass partition — and out the far side.', [...toAtr, ...out], { x: city.spawn.x, z: city.spawn.z })); break; }
+      if (out && out.length >= 1 && accept(trialFromPath(city, world, 'atrium', 'Glass Office', 'Break through the gutted office floor — vault desks, slide under ducts, wall-run the glass partition — and out the far side.', [...toAtr, ...out], { x: city.spawn.x, z: city.spawn.z }))) break;
     }
   }
   return trials;

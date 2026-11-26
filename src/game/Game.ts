@@ -48,7 +48,7 @@ function showSoftwareWarning() {
   document.body.append(d);
 }
 function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
-const CALIB_VERSION = 8;
+const CALIB_VERSION = 9;
 
 type Mode = 'loading' | 'attract' | 'free' | 'trial' | 'replay';
 
@@ -203,7 +203,7 @@ export class Game {
     // trials + medal calibration with the autopilot (cached)
     this.ui.setLoading(0.8, 'Calibrating time trials');
     await this.yieldUI();
-    this.trials = buildTrials(this.city, this.builder.world);
+    this.trials = buildTrials(this.city, this.builder.world, this.builder.ziplines);
     for (const t of this.trials) {
       const key = `${t.id}@${CALIB_VERSION}`;
       let ref = this.save.data.calib[key];
@@ -598,6 +598,38 @@ export class Game {
       const c = m.geometry.boundingSphere!.center.clone().applyMatrix4(m.matrixWorld);
       m.castShadow = c.x > minX - pad && c.x < maxX + pad && c.z > minZ - pad && c.z < maxZ + pad;
     });
+    // district casters get a per-frame distance check in cullDetail
+    this.casters = [];
+    this.r.scene.getObjectByName('world')?.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh && m.castShadow) this.casters.push({ mesh: m, c: m.geometry.boundingSphere!.center.clone().applyMatrix4(m.matrixWorld) });
+    });
+  }
+
+  /**
+   * Small detail (railings, lamps, fittings, foliage, screens, cables...) is invisible past a couple of
+   * hundred metres but costs a draw per chunk: hide it beyond 230 m. Building shells, glass, roofs and
+   * streets always draw, so the skyline is unchanged. Checked every few frames.
+   */
+  private detail: { mesh: THREE.Mesh; c: THREE.Vector3 }[] | null = null;
+  private casters: { mesh: THREE.Mesh; c: THREE.Vector3 }[] = [];
+  private cullT = 0;
+  private cullDetail() {
+    if ((this.cullT = (this.cullT + 1) % 6) !== 0) return;
+    if (!this.detail) {
+      const DETAIL = new Set(['metal', 'metalDark', 'metalPainted', 'red', 'wood', 'rubber', 'lamp', 'lampRed', 'lampWarm', 'screen', 'cable', 'stripe', 'foliage', 'foliageDark', 'trunk', 'solar', 'tile', 'water', 'gravel']);
+      this.detail = [];
+      this.r.scene.getObjectByName('world')?.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh || !DETAIL.has(m.userData.matKey)) return;
+        if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+        this.detail!.push({ mesh: m, c: m.geometry.boundingSphere!.center.clone().applyMatrix4(m.matrixWorld) });
+      });
+    }
+    const cam = this.r.camera.position, R2 = 230 * 230, S2 = 260 * 260;
+    for (const d of this.detail) d.mesh.visible = (d.c.x - cam.x) ** 2 + (d.c.z - cam.z) ** 2 < R2;
+    // shadows only from geometry near you: far shadows are lost in the outer cascade anyway
+    for (const d of this.casters) d.mesh.castShadow = (d.c.x - cam.x) ** 2 + (d.c.z - cam.z) ** 2 < S2;
   }
 
   /** leave Night Run state; lighting follows the Night setting */
@@ -825,6 +857,7 @@ export class Game {
     this.rain.update(gdt, this.r.camera.position);
     this.animateShards(dt);
     for (const b of this.cpBeams) (b.material as THREE.ShaderMaterial).uniforms.uTime.value += dt;
+    this.cullDetail();
     this.r.updateSun(this.r.camera.position);
     const speed = this.mode === 'free' || this.mode === 'trial' ? this.player.hSpeed : 0;
     this.r.render(dt, Math.max(0, (speed - 6) / 4) * this.save.settings.comfort, this.slowAmt);

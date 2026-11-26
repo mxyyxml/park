@@ -26,6 +26,7 @@ export function buildWorldMeshes(b: WorldBuilder, mats: MaterialLib): WorldMeshe
     for (const [, m] of chunks) for (const [key, g] of m) {
       if (g.vcount === 0) continue;
       const mesh = new THREE.Mesh(toGeometry(g), mats.get(key));
+      mesh.userData.matKey = key;
       const transparent = key === 'glass';
       mesh.castShadow = !transparent && key !== 'lamp' && key !== 'stripe' && key !== 'screen' && key !== 'cable' && !(far && key === 'asphalt');
       mesh.receiveShadow = !transparent;

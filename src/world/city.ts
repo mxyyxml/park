@@ -9,16 +9,19 @@ import * as P from './props';
 
 export const BLOCK = 46;
 export const STREET = 16;
-export const COLS = 4;
-export const ROWS = 3;
+export const COLS = 6;
+export const ROWS = 5;
 export const X0 = -(COLS * BLOCK + (COLS - 1) * STREET) / 2;
 export const Z0 = -(ROWS * BLOCK + (ROWS - 1) * STREET) / 2;
 
 export type BlockKind = 'res' | 'industrial' | 'garden' | 'atrium' | 'spire' | 'construction' | 'campus';
+// a 6 x 5 district (about 360 m across): the Spire near the middle, one atrium and one construction site
 const LAYOUT: BlockKind[][] = [
-  ['res', 'industrial', 'res', 'garden'],
-  ['res', 'atrium', 'spire', 'res'],
-  ['construction', 'res', 'campus', 'industrial'],
+  ['res', 'industrial', 'res', 'garden', 'res', 'industrial'],
+  ['res', 'res', 'campus', 'res', 'industrial', 'res'],
+  ['garden', 'atrium', 'res', 'spire', 'res', 'garden'],
+  ['industrial', 'res', 'construction', 'res', 'campus', 'res'],
+  ['res', 'garden', 'res', 'industrial', 'res', 'res'],
 ];
 
 export interface Edge { a: number; b: number; kind: 'jump' | 'climb' | 'drop' | 'bridge' | 'zip' | 'beam' | 'billboard' | 'crane' | 'interior' | 'route'; ax: number; az: number; bx: number; bz: number }
@@ -368,6 +371,11 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
     lane(hiB, sx, sz); lane(loB, ex, ez);
     b.occupy(hiB, sx - 1.5, sz - 1.5, sx + 1.5, sz + 1.5);
     b.occupy(loB, ex - 1.5, ez - 1.5, ex + 1.5, ez + 1.5);
+    // keep the strip under the cable clear of roof props wherever a hanging rider (~2.3 m down) could hit them
+    for (let k = 0; k <= Math.ceil(L); k++) {
+      const t = k / Math.ceil(L), x = sx + (ex - sx) * t, z = sz + (ez - sz) * t, y = sy + (ey - sy) * t;
+      for (const bl of b.buildings) if (x > bl.minX && x < bl.maxX && z > bl.minZ && z < bl.maxZ && y - 2.6 < bl.h + 6) b.occupy(bl, x - 0.9, z - 0.9, x + 0.9, z + 0.9);
+    }
   };
   const doors: { bl: Building; axis: 'x' | 'z'; side: number; lo: number; hi: number }[] = [];
   for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) {
@@ -470,6 +478,16 @@ export function buildCity(b: WorldBuilder, seed = 1337): CityInfo {
       const L = 8, cx = bl.minX + w * fx, cz = bl.minZ + d * fz;
       const [x0, z0, x1, z1] = along === 'x' ? [cx - L / 2, cz - 0.2, cx + L / 2, cz + 0.2] : [cx - 0.2, cz - L / 2, cx + 0.2, cz + L / 2];
       if (!b.free(bl, x0, z0, x1, z1, 1.3)) continue;
+      // never under a zipline: a rider hangs ~2.3 m below the cable and would hit the panel
+      const underCable = b.ziplines.some((zl) => {
+        const n = Math.ceil(Math.hypot(zl.bx - zl.ax, zl.bz - zl.az));
+        for (let k = 0; k <= n; k++) {
+          const t = k / n, x = zl.ax + (zl.bx - zl.ax) * t, z = zl.az + (zl.bz - zl.az) * t, y = zl.ay + (zl.by - zl.ay) * t;
+          if (x > x0 - 1.2 && x < x1 + 1.2 && z > z0 - 1.2 && z < z1 + 1.2 && y - 2.6 < bl.h + 3.6) return true;
+        }
+        return false;
+      });
+      if (underCable) continue;
       b.occupy(bl, x0 - 1.3, z0 - 1.3, x1 + 1.3, z1 + 1.3); // keep the running room clear of later props
       if (along === 'x') P.billboard(b, x0, bl.h, cz, x1, cz, 0, 3.4, adI++);
       else P.billboard(b, cx, bl.h, z0, cx, z1, 0, 3.4, adI++);
