@@ -16,7 +16,7 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { buildTrials, calibrate, TrialDef } from './Trials';
 import { Horde, InfectedView } from './Infected';
 import { Combo } from './Combo';
-import { Weapons } from './Weapons';
+import { Weapons, ITEM_NAME, type Item, type ItemKind } from './Weapons';
 import { Story, CHAPTERS, type StoryPlaces, type Vec as SVec } from './Story';
 import { Rain } from '../world/Rain';
 import { Bot } from './Bot';
@@ -217,7 +217,6 @@ export class Game {
     this.r.scene.add(this.rain.mesh);
     this.horde = new Horde(this.builder.world);
     this.weapons = new Weapons(this.r.scene, this.r.camera, this.builder.world);
-    this.weapons.setVisible(false);
     this.infView = new InfectedView(64, this.charAssets);
     this.infView.group.visible = false;
     this.r.scene.add(this.infView.group);
@@ -444,7 +443,7 @@ export class Game {
     this.weapons.reset();
     // resuming a later chapter: you already found what came before
     if (chapter >= 1) this.weapons.give('katana');
-    if (chapter >= 3) { this.weapons.give('pipe'); this.weapons.flares = 3; this.weapons.equip('katana'); }
+    if (chapter >= 3) this.weapons.give('flares');
     const P = this.storyPlaces();
     const spawnAt = [this.city.spawn, P.stash, P.shards[2], P.spireTop][chapter];
     this.player.spawn(spawnAt.x, spawnAt.y, spawnAt.z, 'yaw' in spawnAt ? (spawnAt as { yaw: number }).yaw : 0);
@@ -452,12 +451,8 @@ export class Game {
     this.story = new Story(P, {
       say: (lines) => this.ui.radio(lines),
       objective: (text, target) => { this.storyObj = { text, target }; this.ui.setCheckpoints(0, 0, `${CHAPTERS[this.story?.chapter ?? chapter].toUpperCase()}<br>${text}`); },
-      give: (item) => {
-        if (item === 'flares') this.weapons.flares += 3; else this.weapons.give(item);
-        this.audio.playUi('collect', 0.5);
-        this.ui.toast(item === 'flares' ? '+3 flares' : item === 'katana' ? 'Katana' : 'Steel pipe', item === 'flares' ? 'G to throw' : 'F to strike · 1/2/3 to switch', true, 2.2);
-        this.ui.setWeapon(this.weapons.label);
-      },
+      // story items appear on the ground at your feet: free slots fill by themselves, a full inventory asks to swap
+      give: (item) => this.dropItem({ kind: item, count: item === 'flares' ? 3 : 1 }, this.player.pos, item === 'flares' ? 0.9 : item === 'pipe' ? -0.9 : 0),
       night: (on) => {
         if (on === this.nightRun) return;
         this.setNightRun(on);
@@ -491,14 +486,10 @@ export class Game {
       this.r.scene.add(g); this.pickups.push(g);
     }
   }
-  private updateStory(dt: number, f: { kickPressed: boolean; weapon: number; throwPressed: boolean }) {
+  private updateStory(dt: number, f: { kickPressed: boolean; weapon: number; throwPressed: boolean; kickOnly: boolean; swapPressed: boolean }) {
     const s = this.story!, p = this.player;
     // day chapters: weapons still switch and swing (nothing to hit until night)
-    if (!this.nightRun) {
-      if (f.weapon) this.weapons.equip((['kick', 'katana', 'pipe'] as const)[f.weapon - 1]);
-      if (f.kickPressed && this.weapons.equipped !== 'kick' && this.weapons.cd <= 0) { this.weapons.swing(this.horde, p.pos.x, p.pos.y, p.pos.z, p.yaw, false); this.audio.playUi('whoosh', 0.4); }
-      this.weapons.update(dt, null);
-    }
+    if (!this.nightRun) this.updateWeapons(dt, f);
     s.update(dt, p.pos, p.state !== PState.Dead);
     // caches disappear once taken
     if (this.pickups.length === 2) { this.pickups[0].visible = s.chapter === 0; this.pickups[1].visible = s.chapter === 2 && s.step === 0; }
@@ -517,6 +508,7 @@ export class Game {
   }
   private endStoryState() {
     if (!this.story) return;
+    this.clearGround();
     this.story = null;
     for (const o of this.pickups) this.r.scene.remove(o);
     this.pickups = [];
@@ -589,12 +581,12 @@ export class Game {
   private setNightRun(on: boolean) {
     if (this.challenge) this.stopChallenge();
     this.nightRun = on;
-    // Night Run arms you: katana in hand, pipe on your back, three flares (the story keeps what you found)
+    // Night Run arms you: katana in hand, flares in the other slot; more lie on the roofs (the story keeps what you found)
     if (!this.story) {
       this.weapons.reset();
-      if (on) { this.weapons.give('pipe'); this.weapons.give('katana'); this.weapons.flares = 3; }
+      this.clearGround();
+      if (on) { this.weapons.give('katana'); this.weapons.give('flares'); this.scatterItems(); }
     }
-    this.weapons.setVisible(on || !!this.story);
     this.ui.setWeapon(on || this.story ? this.weapons.label : null);
     this.combo = new Combo();
     this.ui.setCombo(this.mode === 'free' ? this.combo : null);
@@ -824,7 +816,7 @@ export class Game {
     let f = this.input.sample(dt);
     if (this.autopilot) f = this.autopilot.step(p, dt);
     if (this.pendingPress) {
-      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn; f.kickPressed ||= this.pendingPress.kickPressed; f.grapplePressed ||= this.pendingPress.grapplePressed; f.throwPressed ||= this.pendingPress.throwPressed; f.weapon ||= this.pendingPress.weapon;
+      f.jumpPressed ||= this.pendingPress.jumpPressed; f.crouchPressed ||= this.pendingPress.crouchPressed; f.quickTurn ||= this.pendingPress.quickTurn; f.kickPressed ||= this.pendingPress.kickPressed; f.grapplePressed ||= this.pendingPress.grapplePressed; f.throwPressed ||= this.pendingPress.throwPressed; f.weapon ||= this.pendingPress.weapon; f.kickOnly ||= this.pendingPress.kickOnly; f.swapPressed ||= this.pendingPress.swapPressed;
       f.lookX += this.pendingPress.lookX; f.lookY += this.pendingPress.lookY;
       this.pendingPress = null;
     }
@@ -842,7 +834,7 @@ export class Game {
     let ticks = 0;
     this.frameEvents.length = 0;
     while (this.acc >= DT && ticks < 10) {
-      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, kickPressed: false, grapplePressed: false, throwPressed: false, weapon: 0, lookX: 0, lookY: 0 };
+      const inp = ticks === 0 ? f : { ...f, jumpPressed: false, crouchPressed: false, quickTurn: false, kickPressed: false, grapplePressed: false, throwPressed: false, weapon: 0, kickOnly: false, swapPressed: false, lookX: 0, lookY: 0 };
       p.update(DT, inp);
       for (const e of p.events) this.frameEvents.push(e);
       if (this.trialRunning) { this.trialTime += DT; this.recorder?.record(DT, p); }
@@ -881,7 +873,12 @@ export class Game {
     this.rig.apply(this.r.camera);
     this.r.camera.updateMatrixWorld();
     this.feetInterp.set(this.rig.pos.x, this.rig.pos.y, this.rig.pos.z);
+    // holding a weapon: its animation drives the arms; it goes away for climbs, hangs and other hand-on moves
+    const armed = (this.nightRun || !!this.story) && !!this.weapons.held;
+    const holdOk = armed && (p.state === PState.Ground || p.state === PState.Air || p.state === PState.Slide);
+    this.body.held = holdOk ? this.weapons.handTargets() : null;
     this.body.update(dt, p, this.r.camera.matrixWorld, this.rig.eyePos, this.feetInterp);
+    this.weapons.attach(this.body.rightHandView, holdOk);
     // PB ghost
     if (this.raceGhost && this.mode === 'trial') {
       this.raceGhost.seek(this.trialTime);
@@ -930,26 +927,87 @@ export class Game {
     this.slowScale = scale; this.slowMoT = Math.max(this.slowMoT, secs);
   }
 
-  private updateNightRun(dt: number, f: { kickPressed: boolean; weapon: number; throwPressed: boolean }) {
-    const p = this.player, alive = p.state !== PState.Dead;
-    const W = this.weapons;
-    // weapons: 1 kick, 2 katana, 3 pipe; F strikes with what you hold; G throws a flare
-    if (f.weapon) W.equip((['kick', 'katana', 'pipe'] as const)[f.weapon - 1]);
+  /**
+   * Inventory and held weapon, shared by Night Run and the story: 1/2 select a slot, F uses what's in
+   * hand (a swing, or a flare throw), G quick-throws a flare, R swaps with an item on the ground.
+   * Returns true when the runner should kick (V, or F with an empty hand).
+   */
+  private updateWeapons(dt: number, f: { kickPressed: boolean; weapon: number; throwPressed: boolean; kickOnly: boolean; swapPressed: boolean }) {
+    const p = this.player, W = this.weapons, alive = p.state !== PState.Dead;
+    if (f.weapon) W.select(f.weapon - 1);
     if (f.throwPressed && alive) {
-      const cam = this.r.camera, dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-      if (W.throwFlare(cam.position, dir)) this.audio.playUi('whoosh', 0.4); else this.ui.toast('No flares', '', true, 0.8);
+      const fl = W.slots.findIndex((x) => x?.kind === 'flares');
+      if (fl < 0) this.ui.toast('No flares', '', true, 0.8); else { W.select(fl); W.use(); }
     }
-    const air = !p.grounded || p.state === PState.Slide;
-    if (f.kickPressed && W.equipped !== 'kick' && W.cd <= 0 && alive) {
-      const hits = W.swing(this.horde, p.pos.x, p.pos.y, p.pos.z, p.yaw, air);
-      this.audio.playUi('whoosh', 0.5);
-      if (hits) { this.audio.playFx('kick', 0.8); this.rig.onEvents([{ type: 'bump', speed: 4 }]); this.combo.add(W.equipped === 'katana' ? 'slash' : 'smash'); this.slowMo(0.3, 0.1); }
+    let kick = f.kickOnly && alive;
+    if (f.kickPressed && alive) { if (W.use()) this.audio.playUi('whoosh', W.held?.kind === 'pipe' ? 0.35 : 0.5); else kick = true; }
+    const cam = this.r.camera, look = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const ev = W.update(dt, { speed: p.hSpeed, gait: p.gaitPhase, airborne: !p.grounded, eye: cam.position.clone(), look }, this.nightRun ? this.horde : null);
+    if (ev && ev !== 'throw' && this.nightRun) {
+      // the strike frame: running, sliding or falling strikes cut deeper and push harder
+      const air = !p.grounded || p.state === PState.Slide || p.hSpeed > 7;
+      const hits = this.horde.hit(p.pos.x, p.pos.y, p.pos.z, p.yaw, air ? { ...ev, dmg: ev.dmg + 1, push: ev.push * 1.3 } : ev);
+      if (hits) { this.audio.playFx('kick', 0.8); this.rig.onEvents([{ type: 'bump', speed: 4 }]); this.combo.add(ev.name === 'Katana' ? 'slash' : 'smash'); this.slowMo(0.3, 0.1); }
     }
-    W.update(dt, this.horde);
+    if (ev === 'throw') this.audio.playUi('whoosh', 0.4);
+    this.updateGround(f.swapPressed);
     this.ui.setWeapon(W.label);
+    return kick;
+  }
+
+  // ---- items lying on the ground
+  private ground: { item: Item; mesh: THREE.Object3D; pos: THREE.Vector3; armed: boolean }[] = [];
+  private dropItem(item: Item, at: { x: number; y: number; z: number }, side = 0) {
+    const g = new THREE.Group();
+    const col = item.kind === 'flares' ? 0xff3020 : item.kind === 'katana' ? 0xd9dde2 : 0x8a8e94;
+    const body = new THREE.Mesh(item.kind === 'flares' ? new THREE.BoxGeometry(0.3, 0.12, 0.18) : new THREE.BoxGeometry(item.kind === 'katana' ? 0.98 : 0.8, 0.04, 0.05),
+      new THREE.MeshStandardMaterial({ color: col, metalness: item.kind === 'flares' ? 0 : 0.9, roughness: 0.3, emissive: item.kind === 'flares' ? 0x801008 : 0x000000 }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.52, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xd4141c, transparent: true, opacity: 0.8 }));
+    ring.position.y = 0.03;
+    body.position.y = 0.45;
+    g.add(body, ring);
+    const pos = new THREE.Vector3(at.x + side, at.y, at.z);
+    g.position.copy(pos);
+    this.r.scene.add(g);
+    // items you drop (or that appear under you) wait until you've stepped away
+    this.ground.push({ item, mesh: g, pos, armed: false });
+  }
+  private clearGround() { for (const g of this.ground) this.r.scene.remove(g.mesh); this.ground = []; }
+  /** Night Run: spare weapons and flare packs on roofs along the trial routes (known reachable spots) */
+  private scatterItems() {
+    const spots = this.trials.flatMap((t) => t.checkpoints).filter((c) => c.y > 5 && c.y < 40);
+    const kinds: ItemKind[] = ['pipe', 'flares', 'katana', 'flares', 'pipe', 'flares', 'katana', 'flares'];
+    for (let i = 0; i < kinds.length && i * 3 < spots.length; i++) { const c = spots[(i * 3 + 1) % spots.length]; this.dropItem({ kind: kinds[i], count: kinds[i] === 'flares' ? 2 : 1 }, c); this.ground.at(-1)!.armed = true; }
+  }
+  private updateGround(swap: boolean) {
+    const p = this.player.pos, W = this.weapons;
+    let prompt: string | null = null;
+    for (const g of [...this.ground]) {
+      g.mesh.children[0].rotation.y += 0.02; g.mesh.children[0].position.y = 0.45 + Math.sin(performance.now() / 400 + g.pos.x) * 0.05;
+      const near = Math.hypot(p.x - g.pos.x, p.z - g.pos.z) < 1.3 && Math.abs(p.y - g.pos.y) < 1.5;
+      if (!near) { if (!g.armed && Math.hypot(p.x - g.pos.x, p.z - g.pos.z) > 1.8) g.armed = true; continue; }
+      if (!g.armed) continue;
+      const fits = (g.item.kind === 'flares' && W.slots.some((x) => x?.kind === 'flares')) || W.slots.some((x) => !x);
+      if (fits || swap) {
+        const dropped = W.give(g.item.kind, g.item.count);
+        this.r.scene.remove(g.mesh); this.ground.splice(this.ground.indexOf(g), 1);
+        this.audio.playUi('collect', 0.4);
+        this.ui.toast(ITEM_NAME[g.item.kind] + (g.item.kind === 'flares' ? ` +${g.item.count}` : ''), g.item.kind === 'flares' ? 'F or G to throw' : 'F to strike', true, 1.4);
+        if (dropped) this.dropItem(dropped, g.pos);
+        break;
+      }
+      prompt = `R: swap for ${ITEM_NAME[g.item.kind]}`;
+    }
+    this.ui.setPrompt(prompt);
+  }
+
+  private updateNightRun(dt: number, f: { kickPressed: boolean; weapon: number; throwPressed: boolean; kickOnly: boolean; swapPressed: boolean }) {
+    const p = this.player, alive = p.state !== PState.Dead;
+    const kickWanted = this.updateWeapons(dt, f);
+    const air = !p.grounded || p.state === PState.Slide;
     // kick: a dropkick when running fast, sliding or airborne
     this.kickCD -= dt;
-    if (f.kickPressed && W.equipped === 'kick' && this.kickCD <= 0 && alive) {
+    if (kickWanted && this.kickCD <= 0 && alive) {
       this.kickCD = 0.55;
       const power = (8 + p.hSpeed * 0.6) * (air ? 1.5 : 1);
       const hits = this.horde.kick(p.pos.x, p.pos.y, p.pos.z, p.yaw, power);
@@ -961,7 +1019,7 @@ export class Game {
     this.horde.update(dt, { x: p.pos.x, y: p.pos.y, z: p.pos.z, alive });
     for (const kind of this.horde.deaths) {
       this.kills++;
-      if (this.kills % 4 === 0) { W.flares++; this.ui.toast('+1 flare', '', false, 0.8); }
+      if (this.kills % 4 === 0) { const st = this.weapons.slots.find((x) => x?.kind === 'flares'); if (st) { st.count++; this.ui.toast('+1 flare', '', false, 0.8); } }
       this.combo.add(kind === 'mutant' ? 'mutantDown' : kind === 'runner' ? 'runnerDown' : 'takedown');
       if (kind === 'mutant') { this.ui.toast('Mutant down', '', true, 1.2); this.slowMo(0.2, 0.8); }
       else this.slowMo(0.25, 0.4);

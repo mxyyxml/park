@@ -39,13 +39,15 @@ export interface InputFrame {
   kickPressed: boolean;
   grapplePressed: boolean;
   grapple: boolean; // held: reel the rope in
-  weapon: number;   // 1..3 pressed this frame: switch weapon (0 = none)
+  weapon: number;   // 1..2 pressed this frame: select inventory slot (0 = none)
   throwPressed: boolean;
+  kickOnly: boolean;  // V: kick regardless of what's in hand
+  swapPressed: boolean; // R: swap the item in hand for the one on the ground
 }
 
 export function emptyInput(): InputFrame {
   return { moveX: 0, moveY: 0, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false,
-    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false, grapple: false, weapon: 0, throwPressed: false };
+    crouchPressed: false, sprint: false, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false, grapple: false, weapon: 0, throwPressed: false, kickOnly: false, swapPressed: false };
 }
 
 export type PEvent =

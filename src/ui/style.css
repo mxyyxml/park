@@ -123,3 +123,4 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #radio { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); max-width: min(720px, calc(100% - 32px)); padding: 10px 16px; background: var(--glass); border-left: 3px solid var(--red); font: 500 15px/1.45 var(--font); text-shadow: 0 1px 4px rgba(0,0,0,.6); }
 #radio b { color: var(--red); letter-spacing: .18em; font-size: 12px; margin-right: 6px; }
 #radio b.kai { color: var(--white); }
+#itemprompt { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); font: 700 13px var(--mono); letter-spacing: .14em; text-transform: uppercase; background: var(--glass); padding: 8px 14px; }

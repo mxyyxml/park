@@ -148,7 +148,9 @@ export class Input {
     f.quickTurn = this.anyPressed(this.bind.quickTurn);
     f.kickPressed = this.anyPressed(this.bind.kick);
     f.throwPressed = this.anyPressed(this.bind.throw);
-    f.weapon = this.anyPressed(['Digit1']) ? 1 : this.anyPressed(['Digit2']) ? 2 : this.anyPressed(['Digit3']) ? 3 : 0;
+    f.weapon = this.anyPressed(['Digit1']) ? 1 : this.anyPressed(['Digit2']) ? 2 : 0;
+    f.kickOnly = this.anyPressed(['KeyV']);
+    f.swapPressed = this.anyPressed(['KeyR']);
     f.grapplePressed = this.anyPressed(this.bind.grapple) || this.pressedLatch.has('Mouse1');
     f.grapple = this.any(this.bind.grapple) || !!(this.mouseButtons & 2);
     f.lookX = this.lookDX * this.sensitivity;
@@ -182,7 +184,8 @@ export class Input {
       f.kickPressed ||= pressed(3);
       f.grapplePressed ||= pressed(11);
       f.throwPressed ||= pressed(12);                                   // d-pad up: flare
-      if (pressed(14)) f.weapon = 1; if (pressed(13)) f.weapon = 2; if (pressed(15)) f.weapon = 3; // d-pad left/down/right
+      if (pressed(14)) f.weapon = 1; if (pressed(15)) f.weapon = 2; // d-pad left/right: slots
+      f.swapPressed ||= pressed(13);                                     // d-pad down: swap with ground item
       f.grapple ||= btn(11);
       if (pressed(9)) this.onPausePressed?.();
       if (pressed(8)) this.onRestartPressed?.();

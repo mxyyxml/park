@@ -257,7 +257,7 @@ describe('parkour moves', () => {
     w.add(-5, 0, -10.1, 5, 5, -10);
     const p = makePlayer(w);
     p.vel.z = -40;
-    for (let i = 0; i < 120; i++) p.update(DT, { moveX: 0, moveY: 1, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false, crouchPressed: false, sprint: true, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false, grapple: false, weapon: 0, throwPressed: false });
+    for (let i = 0; i < 120; i++) p.update(DT, { moveX: 0, moveY: 1, lookX: 0, lookY: 0, jump: false, jumpPressed: false, crouch: false, crouchPressed: false, sprint: true, walk: false, quickTurn: false, kickPressed: false, grapplePressed: false, grapple: false, weapon: 0, throwPressed: false, kickOnly: false, swapPressed: false });
     expect(p.pos.z).toBeGreaterThan(-10);
   });
 

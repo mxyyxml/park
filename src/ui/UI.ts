@@ -75,7 +75,7 @@ export class UI {
     this.prompt = el('div', { id: 'prompt', class: 'hidden' }, 'Click to resume');
     this.touchLayer = el('div', { id: 'touch', class: 'hidden' }, `<div class="stick"><i></i></div><button class="tbtn up" aria-label="Up: jump, climb, vault">UP</button><button class="tbtn down" aria-label="Down: slide, roll, drop">DOWN</button><button class="tbtn pause" aria-label="Pause">II</button>`);
     this.hud.append(this.touchLayer);
-    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt, this.health, this.hurt, this.comboEl, this.weaponEl, this.radioEl);
+    this.hud.append(this.reticle, this.timer, this.cp, this.shards, this.speed, this.marker, this.toastEl, this.countdownEl, this.help, this.debug, this.prompt, this.health, this.hurt, this.comboEl, this.weaponEl, this.radioEl, this.toastPrompt);
     this.menu = el('div', { class: 'layer menu hidden' });
     this.fade = el('div', { id: 'fade', class: 'layer' });
     this.root.append(this.hud, this.menu, this.fade, this.loading);
@@ -138,6 +138,9 @@ export class UI {
     this.open(p);
   }
 
+  /** context prompt over the HUD (e.g. swapping weapons); null hides it */
+  setPrompt(text: string | null) { this.toastPrompt.classList.toggle('hidden', !text); if (text && this.toastPrompt.textContent !== text) this.toastPrompt.textContent = text; }
+  toastPrompt = el('div', { id: 'itemprompt', class: 'hidden' });
   /** held weapon and flares, bottom right; null hides it */
   setWeapon(text: string | null) { this.weaponEl.classList.toggle('hidden', text == null); if (text != null && this.weaponEl.textContent !== text) this.weaponEl.textContent = text; }
   private bankT = 0; private lastBanked = 0;
@@ -338,8 +341,9 @@ export class UI {
       <span>Down</span><span><kbd>Ctrl</kbd> / <kbd>C</kbd> / <kbd>RMB</kbd> / B · crouch, slide, roll (press just before landing), drop</span>
       <span>Quick turn</span><span><kbd>Q</kbd> / X · also: jump during a wall-climb to spin off</span>
       <span>Grapple</span><span><kbd>E</kbd> / <kbd>MMB</kbd> / R3 · aim at a red ring on a tall roof edge (it lights up in range) to reel yourself up; jump to let go early</span>
-      <span>Weapons</span><span><kbd>1</kbd> kick · <kbd>2</kbd> katana · <kbd>3</kbd> steel pipe / D-pad · strike with <kbd>F</kbd> / Y</span>
-      <span>Flare</span><span><kbd>G</kbd> / D-pad up · throw: it burns red and lures nearby infected away from you</span>
+      <span>Inventory</span><span>two slots: <kbd>1</kbd> / <kbd>2</kbd> (D-pad left/right) · <kbd>F</kbd> / Y uses what's in hand: swing, or throw a flare · walk over items to pick them up, <kbd>R</kbd> / D-pad down swaps when full</span>
+      <span>Flare</span><span><kbd>G</kbd> / D-pad up · quick throw: it burns red and lures nearby infected away from you</span>
+      <span>Kick</span><span><kbd>V</kbd>, or <kbd>F</kbd> with an empty hand</span>
       <span>Kick</span><span><kbd>F</kbd> / Y · knocks the infected back; running, sliding or in the air it's a dropkick that floors them</span>
       <span>Restart trial</span><span><kbd>R</kbd> / Back</span>
       <span>Pause</span><span><kbd>Esc</kbd> / Start</span>

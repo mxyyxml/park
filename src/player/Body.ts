@@ -324,6 +324,13 @@ export class RunnerBody {
   private footSpring = [V(), V()];
   private footInit = false;
   visible = true;
+  /**
+   * Held item (first person): view-space targets for the gripping hand(s) and the blade direction,
+   * set every frame by the weapon animation. Ignored during moves that need the hands (climb, hang...).
+   */
+  held: { right: THREE.Vector3; left: THREE.Vector3 | null; blade: THREE.Vector3; stiff: number } | null = null;
+  /** where the right hand really is (view space) after the spring and IK: the weapon attaches here */
+  rightHandView = new THREE.Vector3();
 
   // arm geometry constants
   static UPPER = 0.29; static FORE = 0.27;
@@ -774,6 +781,17 @@ export class RunnerBody {
       } else {
         target.set(0.24 * s, -0.66, 0.05);
       }
+      // holding a weapon: the animation drives the gripping hand(s) on the ground, in the air and in slides
+      const H = this.held;
+      if (H && (st === PState.Ground || st === PState.Air || st === PState.Slide) && (s > 0 || H.left)) {
+        target = (s > 0 ? H.right : H.left!).clone();
+        stiff = H.stiff; curl = 0.97;
+        // fist around the grip: fingers wrap across the handle, knuckles forward
+        const bv = H.blade.clone().transformDirection(view);
+        const across = V().crossVectors(V().setFromMatrixColumn(view, 0), bv).normalize(); // perpendicular to the handle
+        if (across.lengthSq() > 0.5) fingerDir = across;
+        pole = new THREE.Vector3(0.7 * s, -0.8, 0.2);
+      }
       // landing: brace
       // spring in view space
       if (arm.pos.lengthSq() === 0) arm.pos.copy(target);
@@ -789,6 +807,7 @@ export class RunnerBody {
       // IK in view space, then to world
       const E = V(), Tt = V();
       ik(shoulder, arm.pos, RunnerBody.UPPER, RunnerBody.FORE, pole, E, Tt);
+      if (s > 0) this.rightHandView.copy(Tt);
       const Sw = shoulder.clone().applyMatrix4(view), Ew = E.applyMatrix4(view), Tw = Tt.applyMatrix4(view);
       const rightW = V().setFromMatrixColumn(view, 0);
       setSegment(arm.upper, Sw, Ew, rightW);
