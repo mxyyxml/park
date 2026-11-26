@@ -191,6 +191,9 @@ export class PlayerController {
   pipe: Box | null = null; pipeNX = 0; pipeNZ = 0; pipeLadder = false; pipeClimbPhase = 0;
   // zip
   zip: Zipline | null = null; zipT = 0; zipSpeed = 0;
+  /** +1 rides from a to b, -1 from b back to a */
+  zipDir = 1;
+  private zipCD = 0;
   /** death animation: which way the head falls (-1 left, 1 right) and how fast you were going */
   deathSide = 1; deathSpeed = 0;
 
@@ -303,6 +306,7 @@ export class PlayerController {
     this.coyote = Math.max(0, this.coyote - dt);
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
     this.grappleCD = Math.max(0, this.grappleCD - dt);
+    this.zipCD = Math.max(0, this.zipCD - dt);
 
     switch (this.state) {
       case PState.Ground: this.updateGround(dt, input); break;
@@ -1342,14 +1346,20 @@ export class PlayerController {
       const dx = z.bx - z.ax, dy = z.by - z.ay, dz = z.bz - z.az;
       const L2 = dx * dx + dy * dy + dz * dz;
       let t = ((hx - z.ax) * dx + (hy - z.ay) * dy + (hz - z.az) * dz) / L2;
-      if (t < 0.02 || t > 0.96) continue;
+      const edge = 0.6 / Math.sqrt(L2); // catchable anywhere but the last 0.6 m at each post
+      if (t < edge || t > 1 - edge) continue;
+      if (z === this.zip && this.zipCD > 0) continue; // don't re-catch the line you just let go of
       const px = z.ax + dx * t, py = z.ay + dy * t, pz = z.az + dz * t;
-      const d = Math.hypot(hx - px, (hy - py) * 0.7, hz - pz);
+      // reach: hands catch a cable up to ~1.4 m overhead (steep lines ridden back uphill start high)
+      const d = Math.hypot(hx - px, (hy - py) * (py > hy ? 0.5 : 0.7), hz - pz);
       if (d > 0.75) continue;
       if (py < hy - 0.9) continue;
       const L = Math.sqrt(L2);
       const along = (this.vel.x * dx + this.vel.y * dy + this.vel.z * dz) / L;
-      this.zip = z; this.zipT = t; this.zipSpeed = Math.max(4, along);
+      // ride toward the end you are moving toward (or facing, if barely moving): lines go both ways
+      const facing = (this.fwdX * dx + this.fwdZ * dz) / L;
+      const dir = Math.abs(along) > 1 ? Math.sign(along) : facing < 0 ? -1 : 1;
+      this.zip = z; this.zipT = t; this.zipDir = dir; this.zipSpeed = Math.max(4, Math.abs(along));
       this.jumpBuffer = 0; // the press that caught the line must not also count as letting go
       this.setState(PState.Zip);
       this.events.push({ type: 'zipStart' });
@@ -1362,15 +1372,17 @@ export class PlayerController {
     const z = this.zip!;
     const dx = z.bx - z.ax, dy = z.by - z.ay, dz = z.bz - z.az;
     const L = Math.hypot(dx, dy, dz);
-    const sinSlope = -dy / L;
-    // speed builds along the line: gravity down the slope plus the trolley's run, against air drag (terminal ~15-22 m/s)
+    const dir = this.zipDir, sinSlope = -dy / L * dir;
+    // speed builds along the line: gravity down the slope plus the trolley's run, against air drag (terminal ~15-22 m/s).
+    // Uphill the trolley winches you along at a steady pace instead of stalling.
     const acc = P.G * sinSlope + 1.6 - 0.008 * this.zipSpeed * this.zipSpeed;
-    this.zipSpeed = Math.min(22, Math.max(3, this.zipSpeed + acc * dt));
-    this.zipT += this.zipSpeed * dt / L;
+    this.zipSpeed = Math.min(22, Math.max(sinSlope < 0 ? 7 : 3, this.zipSpeed + acc * dt));
+    this.zipT += dir * this.zipSpeed * dt / L;
     const hx = z.ax + dx * this.zipT, hy = z.ay + dy * this.zipT, hz = z.az + dz * this.zipT;
     this.pos.x = hx; this.pos.y = hy - 2.05; this.pos.z = hz;
-    this.vel.x = dx / L * this.zipSpeed; this.vel.y = dy / L * this.zipSpeed; this.vel.z = dz / L * this.zipSpeed;
-    const release = this.zipT >= 0.97 || this.jumpBuffer > 0 || input.crouchPressed ||
+    const v = this.zipSpeed * dir / L;
+    this.vel.x = dx * v; this.vel.y = dy * v; this.vel.z = dz * v;
+    const release = (dir > 0 ? this.zipT >= 0.97 : this.zipT <= 0.03) || this.jumpBuffer > 0 || input.crouchPressed ||
       this.world.overlapCylinder(this.pos.x, this.pos.y + 0.1, this.pos.z, P.R * 0.9, 1.6, F.NO_GRAB); // posts and railings do not knock you off
     if (release) {
       this.jumpBuffer = 0;
@@ -1378,6 +1390,7 @@ export class PlayerController {
       this.vel.y += 2.5;
       this.setState(PState.Air); this.airEntrySpeed = this.hSpeed; this.airTime = 0; this.wallCooldown = 0.5;
       this.fallStartY = this.pos.y;
+      this.zipCD = 1.2;
     }
   }
 }
