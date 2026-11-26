@@ -131,10 +131,11 @@ Everything is synthesized at startup:
 - **Free Run** across the whole district, with 12+ hidden **data shards** to collect.
 - **Time Trials**: six routes generated over the level's traversal graph (First Light, Crosstown, Spire Ascent, Crane Line, Pipeworks, Glass Office). They have checkpoints, a countdown, splits against your personal best, gold/silver/bronze medals, and a **ghost** of your best run to race. You can instantly restart or respawn at a checkpoint.
 - **Replays** of any run or PB, with cinematic chase, tracking and fixed cameras, played back at 0.25×, 1× or 2×. The main menu shows an attract mode: the autopilot runs the trials while cinematic cameras follow it.
+- **Ziplines go both ways**: you ride toward the end you're moving or facing toward. Downhill builds speed; uphill the trolley winches you along at a steady 7 m/s.
 - **Map lines**: wall-run billboards over every level wide alley, freestanding wall-run panels on bigger roofs (28 in all), and 18 ziplines, each checked to be rideable by the tests.
 - **Night Run** (`Infected.ts`): the city at night, with infected roaming the streets and some rooftops. They notice you on their own level, chase, wind up and strike, and steer around rooftop props. They can't jump gaps or climb, so parkour is the escape. A kick staggers them; a running, sliding or airborne dropkick floors them; one knocked off a roof stays down. You have health that regenerates after 4 s without a hit, and the HUD shows your survival time and takedowns. The dead rise again later, out of sight. There are three original types:
   - **walkers** shamble, take 3 hits and strike after a short wind-up;
-  - **runners** are wiry, sprint at 5–6 m/s, strike fast and leap short gaps between roofs (so a roof isn't always safe), but go down in 2 hits;
+  - **runners** are wiry, sprint at 5–6 m/s and strike fast, and they do parkour: they climb walls and ledges up to ~4.6 m, vault obstacles, leap short gaps between roofs and drop down after you (surviving ~6 m falls). A roof isn't always safe, but they go down in 2 hits;
   - **mutants** are bulky (about 1.4× size, red eyes) and slow, take 8 hits, shrug off normal kicks (only a dropkick staggers them) and charge from up to 12 m after a telegraphed wind-up; a charge hits for 38 and throws you back.
 
   Takedowns score by type in your combo (runner 400, mutant 1000). The infected and their groans are an original design.

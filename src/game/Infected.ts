@@ -13,7 +13,7 @@ import type { CharacterAssets } from '../player/assets';
 import type { CollisionWorld } from '../physics/collision';
 import type { Building } from '../world/builder';
 
-export type InfState = 'idle' | 'chase' | 'windup' | 'recover' | 'stagger' | 'down' | 'dead' | 'charge';
+export type InfState = 'idle' | 'chase' | 'windup' | 'recover' | 'stagger' | 'down' | 'dead' | 'charge' | 'climb';
 export type InfKind = 'walker' | 'runner' | 'mutant';
 /** per-type tuning: walkers shamble, runners sprint and leap short gaps, mutants are slow tanks that charge */
 export const KINDS: Record<InfKind, { hp: number; speed: [number, number]; dmg: number; windup: number; knock: number; sight: number; scale: number }> = {
@@ -28,6 +28,7 @@ export interface Infected {
   falling: boolean; seed: number; groanT: number; wanderYaw: number;
   detour: number; detourT: number;  // steering offset while going round an obstacle
   hx: number; hy: number; hz: number; // where it was placed, to rise again later
+  climb?: { sx: number; sy: number; sz: number; tx: number; ty: number; tz: number; dur: number }; // runner parkour
 }
 export interface Target { x: number; y: number; z: number; alive: boolean }
 export type InfEvent = { type: 'hit'; dmg: number; knock: number; fromX: number; fromZ: number } | { type: 'groan'; x: number; y: number; z: number; kind: InfKind } | { type: 'fallDeath' };
@@ -133,7 +134,7 @@ export class Horde {
         const g = this.world.groundHeight(z.x, z.z, z.y + 0.6 - z.vy * dt, 0.7 - z.vy * dt);
         if (g && z.y <= g.y + 0.02 && z.vy <= 0) {
           z.y = g.y; z.falling = false;
-          if (z.vy < -11 && z.state !== 'dead') { z.state = 'dead'; z.t = 0; z.hp = 0; this.deaths.push(z.kind); this.events.push({ type: 'fallDeath' }); }
+          if (z.vy < (z.kind === 'runner' ? -16 : -11) && z.state !== 'dead') { z.state = 'dead'; z.t = 0; z.hp = 0; this.deaths.push(z.kind); this.events.push({ type: 'fallDeath' }); }
           else if (z.state === 'chase' || z.state === 'idle') { z.state = 'chase'; z.t = 0; } // a runner's leap landed
           z.vy = 0;
         }
@@ -150,17 +151,21 @@ export class Horde {
           break;
         }
         case 'chase': {
-          // runners leap short gaps to a target a few metres off, up to a storey above or below
-          const canLeap = z.kind === 'runner' && p.alive && dist < 8 && dy > -4 && dy < 2.5 && z.t > 0.3;
-          if (!sameLevel && !canLeap || dist > K.sight * 1.6) { z.state = 'idle'; z.t = 0; break; }
+          // runners do parkour: they keep after you up to ~4.6 m above or 6 m below, within 14 m
+          const parkour = z.kind === 'runner' && p.alive && dist < 14 && dy > -6 && dy < 4.6 && z.t > 0.3;
+          if (!sameLevel && !parkour || dist > K.sight * 1.6) { z.state = 'idle'; z.t = 0; break; }
           const sp = z.speed, ox = z.x, oz = z.z;
           z.yaw = turn(z.yaw, this.steer(z, Math.atan2(-dx, -dz), sp, dt), dt * 6);
           z.gait += dt * sp * 2.6;
-          if (canLeap && Math.hypot(z.x - ox, z.z - oz) < sp * dt * 0.3 && dist > 2) {
-            // stuck at the edge: jump for it
-            z.vx = dx / dist * 7.5; z.vz = dz / dist * 7.5; z.vy = 6.5 + Math.max(0, dy) * 1.6;
-            z.falling = true; z.y += 0.05; z.yaw = Math.atan2(-dx, -dz);
-            break;
+          if (parkour && Math.hypot(z.x - ox, z.z - oz) < sp * dt * 0.3 && dist > 1.5) {
+            if (this.tryClimb(z, dx / dist, dz / dist)) break;           // wall or obstacle ahead: climb / vault it
+            if (!this.supported(z, z.x + dx / dist * 0.8, z.z + dz / dist * 0.8)) {
+              if (dy < -LEVEL) { z.vx = dx / dist * 3.5; z.vz = dz / dist * 3.5; z.vy = 2; }      // you're below: drop after you
+              else if (dist < 8) { z.vx = dx / dist * 7.5; z.vz = dz / dist * 7.5; z.vy = 6.5 + Math.max(0, dy) * 1.6; } // across a gap: leap
+              else break;
+              z.falling = true; z.y += 0.05; z.yaw = Math.atan2(-dx, -dz);
+              break;
+            }
           }
           // mutants charge from a distance: a telegraphed wind-up, then a straight rush
           if (z.kind === 'mutant' && sameLevel && dist > 4 && dist < 12 && z.chargeCD <= 0) {
@@ -169,6 +174,16 @@ export class Horde {
             break;
           }
           if (dist < REACH * K.scale) { z.state = 'windup'; z.t = 0; }
+          break;
+        }
+        case 'climb': {
+          // hand over hand up the face, then pull over the top onto it
+          const c = z.climb!, u = Math.min(1, z.t / c.dur);
+          const up = Math.min(1, u / 0.7), over = Math.max(0, (u - 0.55) / 0.45);
+          z.y = c.sy + (c.ty - c.sy) * up * up * (3 - 2 * up);
+          z.x = c.sx + (c.tx - c.sx) * over; z.z = c.sz + (c.tz - c.sz) * over;
+          z.gait += dt * 14;
+          if (u >= 1) { z.y = c.ty; z.climb = undefined; z.state = 'chase'; z.t = 0.31; }
           break;
         }
         case 'charge': {
@@ -204,6 +219,20 @@ export class Horde {
         if (z.groanT < 0 && dist < 40) { z.groanT = 4 + z.seed * 7; this.events.push({ type: 'groan', x: z.x, y: z.y + 1.6, z: z.z, kind: z.kind }); }
       }
     }
+  }
+
+  /** Runner parkour: something solid ahead with a standable top up to 4.6 m higher? climb (or vault) it. */
+  private tryClimb(z: Infected, fx: number, fz: number) {
+    const hit = this.world.raycast(z.x, z.y + 0.4, z.z, fx, 0, fz, R + 0.9);
+    if (!hit) return false;
+    const tx = hit.x + fx * 0.55, tz = hit.z + fz * 0.55;
+    const top = this.world.groundHeight(tx, tz, z.y + 5.2, 5.0);
+    if (!top) return false;
+    const h = top.y - z.y;
+    if (h < 0.3 || h > 4.6 || this.world.overlapCylinder(tx, top.y + 0.05, tz, R, H - 0.1)) return false;
+    z.climb = { sx: z.x, sy: z.y, sz: z.z, tx, ty: top.y, tz, dur: 0.25 + h * 0.16 };
+    z.state = 'climb'; z.t = 0; z.yaw = Math.atan2(-fx, -fz);
+    return true;
   }
 
   /** Runner's kick: everything in a short cone in front is knocked back. Returns how many were hit. */
@@ -385,7 +414,7 @@ export class InfectedView {
       for (const side of [-1, 1] as const) {
         const s = side < 0 ? 'L' : 'R';
         // arms: reaching for prey, flailing on the strike, limp when down
-        let ax = z.state === 'windup' ? 2.2 - Math.min(1, z.t / 0.45) * 1.6 : z.state === 'chase' ? 1.3 + sw * side * 0.22 + twitch : 0.45 + sw * side * 0.25;
+        let ax = z.state === 'climb' ? 2.75 + sw * side * 0.35 : z.state === 'windup' ? 2.2 - Math.min(1, z.t / 0.45) * 1.6 : z.state === 'chase' ? 1.3 + sw * side * 0.22 + twitch : 0.45 + sw * side * 0.25;
         let spread = 0.12 + (z.state === 'stagger' ? 0.6 : 0);
         if (fall) { ax *= 1 - fall; spread = 1.1 * fall; }
         const sho = up(side * 0.19, 0.46, 0);
@@ -396,7 +425,8 @@ export class InfectedView {
         this.seg(`upper${s}`, i, sho, elb, right); this.seg(`fore${s}`, i, elb, wri, right);
         this.seg(`wrist${s}`, i, wri, end, right); this.seg(`hand${s}`, i, end, end.clone().addScaledVector(fd, 0.1), right);
         // legs: shambling gait with bent knees
-        const a = sw * side * 0.45 * moving * (1 - fall), k = (0.2 + Math.max(0, -sw * side) * 0.55 * moving) * (1 - fall);
+        const climbing = z.state === 'climb' ? 1 : 0;
+        const a = (sw * side * 0.45 * moving + climbing * (0.5 + sw * side * 0.4)) * (1 - fall), k = (0.2 + Math.max(0, -sw * side) * 0.55 * moving + climbing * 0.9) * (1 - fall);
         const hip = P(side * 0.1, 0.91, 0);
         const kn = P(side * 0.1, 0.91 - Math.cos(a) * THIGH, -Math.sin(a) * THIGH);
         const ank = kn.clone().add(new THREE.Vector3(0, -Math.cos(a - k), -Math.sin(a - k)).transformDirection(this.root).multiplyScalar(SHIN));

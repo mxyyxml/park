@@ -119,4 +119,42 @@ describe('infected', () => {
     expect(z.state).toBe('stagger');
     expect(z.hp).toBe(KINDS.mutant.hp - 3);
   });
+
+  describe('runner parkour', () => {
+    // street level with a 3 m wall/roof ahead (+x), a 1 m barrier, and a 4 m ledge to drop from
+    const parkourWorld = () => {
+      const w = new CollisionWorld();
+      w.add(-100, -1, -100, 100, 0, 100);   // ground
+      w.add(6, 0, -10, 20, 3, 10);          // 3 m block to climb onto
+      w.add(-6, 0, 20, -5, 1, 30);          // 1 m barrier across the path at x≈-5.5
+      w.add(-30, 0, -40, -10, 4, -25);      // 4 m roof to drop from
+      return w;
+    };
+    const follow = (h: Horde, z: Infected, t: { x: number; y: number; z: number }, secs: number) => {
+      const ev: string[] = [];
+      for (let i = 0; i < secs * 60; i++) { h.update(1 / 60, { ...t, alive: true }); for (const e of h.events) ev.push(e.type); }
+      return ev;
+    };
+    it('climbs a 3 m wall to reach you on top; a walker cannot', () => {
+      for (const kind of ['runner', 'walker'] as InfKind[]) {
+        const h = new Horde(parkourWorld()); const z = mk(kind, 2, 0, 0, -Math.PI / 2); h.list = [z];
+        follow(h, z, { x: 9, y: 3, z: 0 }, 6);
+        if (kind === 'runner') expect(z.y).toBeCloseTo(3, 1);
+        else expect(z.y).toBeCloseTo(0, 1);
+      }
+    });
+    it('vaults a 1 m barrier in its way', () => {
+      const h = new Horde(parkourWorld()); const z = mk('runner', -2, 0, 25, Math.PI / 2); h.list = [z];
+      const ev = follow(h, z, { x: -12, y: 0, z: 25 }, 6);
+      expect(z.x).toBeLessThan(-6);
+      expect(ev).toContain('hit');
+    });
+    it('drops off a 4 m roof after you and survives', () => {
+      const h = new Horde(parkourWorld()); const z = mk('runner', -15, 4, -30, -Math.PI / 2); h.list = [z];
+      const ev = follow(h, z, { x: -4, y: 0, z: -30 }, 6);
+      expect(z.state).not.toBe('dead');
+      expect(z.y).toBeCloseTo(0, 1);
+      expect(ev).toContain('hit');
+    });
+  });
 });
