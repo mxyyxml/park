@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { WorldBuilder } from '../src/world/builder';
 import { buildCity } from '../src/world/city';
-import { Horde, type Infected } from '../src/game/Infected';
+import { Horde, KINDS, type InfKind, type Infected } from '../src/game/Infected';
+import { CollisionWorld } from '../src/physics/collision';
 
 describe('infected', () => {
   const b = new WorldBuilder(false);
@@ -74,5 +75,48 @@ describe('infected', () => {
     }
     run(h, 4, { x: 9999, y: 0, z: 9999, alive: false });
     expect(z.state).toBe('dead');
+  });
+
+  it('the city has walkers, runners and mutants', () => {
+    const h = fresh();
+    for (const k of ['walker', 'runner', 'mutant'] as InfKind[]) expect(h.list.some((z) => z.kind === k)).toBe(true);
+  });
+
+  // two roofs 10 m up with a 3 m gap between them, over a street
+  const gapWorld = () => { const w = new CollisionWorld(); w.add(-10, 0, -10, 0, 10, 10); w.add(3, 0, -10, 13, 10, 10); w.add(-100, -1, -100, 100, 0, 100); return w; };
+  const mk = (kind: InfKind, x: number, y: number, z: number, yaw = 0): Infected => ({ kind, chargeCD: 0, cdx: 0, cdz: 0, hx: x, hy: y, hz: z, x, y, z, vx: 0, vy: 0, vz: 0, yaw, hp: KINDS[kind].hp, state: 'chase', t: 1, gait: 0, speed: KINDS[kind].speed[0], falling: false, seed: 0.5, groanT: 99, wanderYaw: 0, detour: 0, detourT: 0 });
+
+  it('a runner leaps a short gap between roofs to reach you; a walker cannot', () => {
+    for (const kind of ['runner', 'walker'] as InfKind[]) {
+      const h = new Horde(gapWorld());
+      const z = mk(kind, -3, 10, 0, -Math.PI / 2);
+      h.list = [z];
+      const ev = run(h, 6, { x: 5, y: 10, z: 0, alive: true });
+      if (kind === 'runner') { expect(z.x).toBeGreaterThan(3); expect(z.y).toBeCloseTo(10, 0); expect(ev).toContain('hit'); }
+      else { expect(z.x).toBeLessThan(0); expect(ev).not.toContain('hit'); }
+    }
+  });
+
+  it('a mutant charges from a distance and hits hard', () => {
+    const w = new CollisionWorld(); w.add(-100, -1, -100, 100, 0, 100);
+    const h = new Horde(w);
+    const z = mk('mutant', 0, 0, 0, Math.PI); // facing +z
+    h.list = [z];
+    const hits: number[] = [];
+    for (let i = 0; i < 60 * 3; i++) { h.update(1 / 60, { x: 0, y: 0, z: 8, alive: true }); for (const e of h.events) if (e.type === 'hit') hits.push(e.dmg); }
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]).toBeGreaterThanOrEqual(30);
+  });
+
+  it('a mutant shrugs off a normal kick; only a dropkick staggers it', () => {
+    const w = new CollisionWorld(); w.add(-100, -1, -100, 100, 0, 100);
+    const h = new Horde(w);
+    const z = mk('mutant', 0, 0, -1.2);
+    h.list = [z];
+    h.kick(0, 0, 0, 0, 8);
+    expect(z.state).toBe('chase');
+    h.kick(0, 0, 0, 0, 14);
+    expect(z.state).toBe('stagger');
+    expect(z.hp).toBe(KINDS.mutant.hp - 3);
   });
 });

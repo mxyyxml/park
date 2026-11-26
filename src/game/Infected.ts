@@ -13,25 +13,35 @@ import type { CharacterAssets } from '../player/assets';
 import type { CollisionWorld } from '../physics/collision';
 import type { Building } from '../world/builder';
 
-export type InfState = 'idle' | 'chase' | 'windup' | 'recover' | 'stagger' | 'down' | 'dead';
+export type InfState = 'idle' | 'chase' | 'windup' | 'recover' | 'stagger' | 'down' | 'dead' | 'charge';
+export type InfKind = 'walker' | 'runner' | 'mutant';
+/** per-type tuning: walkers shamble, runners sprint and leap short gaps, mutants are slow tanks that charge */
+export const KINDS: Record<InfKind, { hp: number; speed: [number, number]; dmg: number; windup: number; knock: number; sight: number; scale: number }> = {
+  walker: { hp: 3, speed: [2.3, 3.7], dmg: 22, windup: 0.45, knock: 4, sight: 24, scale: 1 },
+  runner: { hp: 2, speed: [5.0, 5.8], dmg: 14, windup: 0.28, knock: 3, sight: 32, scale: 0.96 },
+  mutant: { hp: 8, speed: [1.6, 1.9], dmg: 38, windup: 0.8, knock: 11, sight: 20, scale: 1.4 },
+};
 export interface Infected {
   x: number; y: number; z: number; vx: number; vy: number; vz: number;
+  kind: InfKind; chargeCD: number; cdx: number; cdz: number;
   yaw: number; hp: number; state: InfState; t: number; gait: number; speed: number;
   falling: boolean; seed: number; groanT: number; wanderYaw: number;
   detour: number; detourT: number;  // steering offset while going round an obstacle
   hx: number; hy: number; hz: number; // where it was placed, to rise again later
 }
 export interface Target { x: number; y: number; z: number; alive: boolean }
-export type InfEvent = { type: 'hit'; dmg: number; fromX: number; fromZ: number } | { type: 'groan'; x: number; y: number; z: number } | { type: 'fallDeath' };
+export type InfEvent = { type: 'hit'; dmg: number; knock: number; fromX: number; fromZ: number } | { type: 'groan'; x: number; y: number; z: number; kind: InfKind } | { type: 'fallDeath' };
 
 const R = 0.32, H = 1.7, G = 24;
-const SIGHT = 24, REACH = 1.25, HIT_RANGE = 1.75, LEVEL = 1.6;
+const REACH = 1.25, HIT_RANGE = 1.75, LEVEL = 1.6;
 
 function rng(seed: number) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
 export class Horde {
   list: Infected[] = [];
   events: InfEvent[] = [];
+  /** kinds that went down since the game last drained this (kicks and falls) */
+  deaths: InfKind[] = [];
   constructor(private world: CollisionWorld) {}
 
   /** Street walkers between the blocks plus small groups on some roofs (never the spawn roof). */
@@ -40,18 +50,21 @@ export class Horde {
     this.list = [];
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (const b of buildings) { minX = Math.min(minX, b.minX); maxX = Math.max(maxX, b.maxX); minZ = Math.min(minZ, b.minZ); maxZ = Math.max(maxZ, b.maxZ); }
-    const place = (x: number, y: number, z: number) => {
+    const place = (x: number, y: number, z: number, kind: InfKind) => {
       const g = this.world.groundHeight(x, z, y + 1.2, 2.5);
       if (!g || Math.abs(g.y - y) > 0.6 || this.world.overlapCylinder(x, g.y + 0.15, z, R, H - 0.2)) return false;
       if (Math.hypot(x - avoid.x, z - avoid.z) < 18) return false;
-      this.list.push({ hx: x, hy: g.y, hz: z, x, y: g.y, z, vx: 0, vy: 0, vz: 0, yaw: r() * Math.PI * 2, hp: 3, state: 'idle', t: r() * 3, gait: r() * 6, speed: 2.3 + r() * 1.4, falling: false, seed: r(), groanT: 2 + r() * 8, wanderYaw: r() * Math.PI * 2, detour: 0, detourT: 0 });
+      const k = KINDS[kind];
+      this.list.push({ kind, chargeCD: 0, cdx: 0, cdz: 0, hx: x, hy: g.y, hz: z, x, y: g.y, z, vx: 0, vy: 0, vz: 0, yaw: r() * Math.PI * 2, hp: k.hp, state: 'idle', t: r() * 3, gait: r() * 6, speed: k.speed[0] + r() * (k.speed[1] - k.speed[0]), falling: false, seed: r(), groanT: 2 + r() * 8, wanderYaw: r() * Math.PI * 2, detour: 0, detourT: 0 });
       return true;
     };
-    for (let tries = 0; this.list.length < street && tries < street * 40; tries++) place(minX - 8 + r() * (maxX - minX + 16), 0, minZ - 8 + r() * (maxZ - minZ + 16));
+    // streets: mostly walkers, a pack of runners, a few mutants; roofs: walkers and runners
+    const streetKind = (): InfKind => { const u = r(); return u < 0.55 ? 'walker' : u < 0.87 ? 'runner' : 'mutant'; };
+    for (let tries = 0; this.list.length < street && tries < street * 40; tries++) place(minX - 8 + r() * (maxX - minX + 16), 0, minZ - 8 + r() * (maxZ - minZ + 16), streetKind());
     const roofs = buildings.filter((b) => (b.maxX - b.minX) * (b.maxZ - b.minZ) > 160 && b.kind !== 'spire' && !(avoid.x >= b.minX && avoid.x <= b.maxX && avoid.z >= b.minZ && avoid.z <= b.maxZ));
     for (let tries = 0; this.list.length < street + roof && tries < roof * 60 && roofs.length; tries++) {
       const b = roofs[Math.floor(r() * roofs.length)];
-      place(b.minX + 2 + r() * (b.maxX - b.minX - 4), b.h, b.minZ + 2 + r() * (b.maxZ - b.minZ - 4));
+      place(b.minX + 2 + r() * (b.maxX - b.minX - 4), b.h, b.minZ + 2 + r() * (b.maxZ - b.minZ - 4), r() < 0.7 ? 'walker' : 'runner');
     }
   }
 
@@ -105,11 +118,13 @@ export class Horde {
       const dx = p.x - z.x, dz = p.z - z.z, dist = Math.hypot(dx, dz), dy = p.y - z.y;
       // the dead rise again at their post, out of the runner's sight
       if (z.state === 'dead' && z.t > 25 && Math.hypot(p.x - z.hx, p.z - z.hz) > 60) {
-        Object.assign(z, { x: z.hx, y: z.hy, z: z.hz, vx: 0, vy: 0, vz: 0, hp: 3, state: 'idle', t: 0, falling: false });
+        Object.assign(z, { x: z.hx, y: z.hy, z: z.hz, vx: 0, vy: 0, vz: 0, hp: KINDS[z.kind].hp, state: 'idle', t: 0, falling: false });
         continue;
       }
       if (dist > 140 && !z.falling && (z.state === 'idle' || z.state === 'chase')) continue; // far from the runner: frozen
       z.t += dt;
+      z.chargeCD -= dt;
+      const K = KINDS[z.kind];
       // gravity: knocked off a ledge, or the floor ended
       if (!z.falling && !this.supported(z)) { z.falling = true; z.vy = 0; }
       if (z.falling) {
@@ -118,7 +133,8 @@ export class Horde {
         const g = this.world.groundHeight(z.x, z.z, z.y + 0.6 - z.vy * dt, 0.7 - z.vy * dt);
         if (g && z.y <= g.y + 0.02 && z.vy <= 0) {
           z.y = g.y; z.falling = false;
-          if (z.vy < -11 && z.state !== 'dead') { z.state = 'dead'; z.t = 0; z.hp = 0; this.events.push({ type: 'fallDeath' }); }
+          if (z.vy < -11 && z.state !== 'dead') { z.state = 'dead'; z.t = 0; z.hp = 0; this.deaths.push(z.kind); this.events.push({ type: 'fallDeath' }); }
+          else if (z.state === 'chase' || z.state === 'idle') { z.state = 'chase'; z.t = 0; } // a runner's leap landed
           z.vy = 0;
         }
         if (z.y < -40) { z.state = 'dead'; z.y = -40; z.falling = false; }
@@ -130,21 +146,45 @@ export class Horde {
           if (z.t > 3) { z.t = 0; z.wanderYaw += (z.seed - 0.5) * 2.4 + Math.sin(z.gait) * 1.2; }
           z.yaw = turn(z.yaw, this.steer(z, z.wanderYaw, 0.6, dt), dt * 1.5);
           z.gait += dt * 3;
-          if (sameLevel && dist < SIGHT) { z.state = 'chase'; z.t = 0; this.events.push({ type: 'groan', x: z.x, y: z.y + 1.6, z: z.z }); }
+          if (sameLevel && dist < K.sight) { z.state = 'chase'; z.t = 0; this.events.push({ type: 'groan', x: z.x, y: z.y + 1.6, z: z.z, kind: z.kind }); }
           break;
         }
         case 'chase': {
-          if (!sameLevel || dist > SIGHT * 1.6) { z.state = 'idle'; z.t = 0; break; }
-          const sp = z.speed;
+          // runners leap short gaps to a target a few metres off, up to a storey above or below
+          const canLeap = z.kind === 'runner' && p.alive && dist < 8 && dy > -4 && dy < 2.5 && z.t > 0.3;
+          if (!sameLevel && !canLeap || dist > K.sight * 1.6) { z.state = 'idle'; z.t = 0; break; }
+          const sp = z.speed, ox = z.x, oz = z.z;
           z.yaw = turn(z.yaw, this.steer(z, Math.atan2(-dx, -dz), sp, dt), dt * 6);
           z.gait += dt * sp * 2.6;
-          if (dist < REACH) { z.state = 'windup'; z.t = 0; }
+          if (canLeap && Math.hypot(z.x - ox, z.z - oz) < sp * dt * 0.3 && dist > 2) {
+            // stuck at the edge: jump for it
+            z.vx = dx / dist * 7.5; z.vz = dz / dist * 7.5; z.vy = 6.5 + Math.max(0, dy) * 1.6;
+            z.falling = true; z.y += 0.05; z.yaw = Math.atan2(-dx, -dz);
+            break;
+          }
+          // mutants charge from a distance: a telegraphed wind-up, then a straight rush
+          if (z.kind === 'mutant' && sameLevel && dist > 4 && dist < 12 && z.chargeCD <= 0) {
+            z.state = 'charge'; z.t = 0; z.cdx = dx / dist; z.cdz = dz / dist; z.chargeCD = 5;
+            this.events.push({ type: 'groan', x: z.x, y: z.y + 1.6, z: z.z, kind: z.kind });
+            break;
+          }
+          if (dist < REACH * K.scale) { z.state = 'windup'; z.t = 0; }
+          break;
+        }
+        case 'charge': {
+          if (z.t < 0.7) { z.yaw = turn(z.yaw, Math.atan2(-dx, -dz), dt * 4); z.cdx = -Math.sin(z.yaw); z.cdz = -Math.cos(z.yaw); break; }
+          const moved = this.move(z, z.cdx * 9 * dt, z.cdz * 9 * dt, true);
+          z.gait += dt * 20;
+          if (dist < HIT_RANGE * 1.1 && Math.abs(dy) < LEVEL && p.alive) {
+            this.events.push({ type: 'hit', dmg: K.dmg, knock: 14, fromX: z.x, fromZ: z.z });
+            z.state = 'recover'; z.t = -0.5;
+          } else if (moved < 9 * dt * 0.3 || z.t > 1.8) { z.state = 'stagger'; z.t = 0; } // hit a wall or ran out
           break;
         }
         case 'windup':
           z.yaw = turn(z.yaw, Math.atan2(-dx, -dz), dt * 6);
-          if (z.t > 0.45) {
-            if (dist < HIT_RANGE && Math.abs(dy) < LEVEL && p.alive) this.events.push({ type: 'hit', dmg: 22, fromX: z.x, fromZ: z.z });
+          if (z.t > K.windup) {
+            if (dist < HIT_RANGE * K.scale && Math.abs(dy) < LEVEL && p.alive) this.events.push({ type: 'hit', dmg: K.dmg, knock: K.knock, fromX: z.x, fromZ: z.z });
             z.state = 'recover'; z.t = 0;
           }
           break;
@@ -161,7 +201,7 @@ export class Horde {
       }
       if (z.state !== 'dead' && z.state !== 'down') {
         z.groanT -= dt;
-        if (z.groanT < 0 && dist < 40) { z.groanT = 4 + z.seed * 7; this.events.push({ type: 'groan', x: z.x, y: z.y + 1.6, z: z.z }); }
+        if (z.groanT < 0 && dist < 40) { z.groanT = 4 + z.seed * 7; this.events.push({ type: 'groan', x: z.x, y: z.y + 1.6, z: z.z, kind: z.kind }); }
       }
     }
   }
@@ -176,8 +216,13 @@ export class Horde {
       if (d > 2.4 || Math.abs(z.y - py) > LEVEL || (d > 0.4 && (dx * fx + dz * fz) / d < 0.45)) continue;
       n++;
       z.hp -= power >= 12 ? 2 : 1;
-      z.vx = fx * power; z.vz = fz * power;
-      z.state = z.hp <= 0 ? 'dead' : power >= 12 ? 'down' : 'stagger';
+      // mutants barely budge: only a dropkick staggers them and they never go down from a kick
+      const tank = z.kind === 'mutant';
+      const push = tank ? power * 0.3 : power;
+      z.vx = fx * push; z.vz = fz * push;
+      if (z.hp <= 0) { z.state = 'dead'; this.deaths.push(z.kind); }
+      else if (tank) { if (power >= 12) z.state = 'stagger'; else continue; }
+      else z.state = power >= 12 ? 'down' : 'stagger';
       z.t = 0;
     }
     return n;
@@ -239,7 +284,7 @@ export class InfectedView {
     const skin = new THREE.MeshStandardMaterial({ color: 0x8e9a86, roughness: 0.75 });
     const hair = new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: 0.9 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x2b2b2d, roughness: 0.8 });
-    const eyes = new THREE.MeshStandardMaterial({ color: 0x222211, emissive: 0xd8e27a, emissiveIntensity: 2.2 });
+    const eyes = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }); // per-kind glow via instance colour
     const shirts = [0x4a4f55, 0x6a5440, 0x3b4a5c, 0x77776a, 0x5a3434, 0x3c4d3a, 0x8a8478].map((c) => new THREE.Color(c));
     const pants = [0x26292e, 0x3d3d44, 0x2e3746, 0x4a3f31, 0x55534d].map((c) => new THREE.Color(c));
     const add = (k: PartKey, geo: THREE.BufferGeometry, mat: THREE.Material | THREE.Material[], color?: (i: number) => THREE.Color) => {
@@ -249,6 +294,7 @@ export class InfectedView {
       this.parts[k] = mesh; this.group.add(mesh);
     };
     const shirt = (i: number) => shirts[(i * 7) % shirts.length], pant = (i: number) => pants[(i * 3) % pants.length];
+    this.shirt = shirt; this.pant = pant;
     if (assets) {
       const hips = bake(assets.pelvis), torso = bake(assets.torso), head = bake(assets.head), shoe = bake(assets.shoe);
       add('hips', hips.geo, cloth, pant);
@@ -276,7 +322,7 @@ export class InfectedView {
       add(`hand${s}`, hand, skin);
     }
     const eye = new THREE.SphereGeometry(0.016, 6, 4);
-    add('eyes', mergeGeometries([eye.clone().translate(-0.034, 0.01, -0.092), eye.clone().translate(0.034, 0.01, -0.092)])!, eyes);
+    add('eyes', mergeGeometries([eye.clone().translate(-0.034, 0.01, -0.092), eye.clone().translate(0.034, 0.01, -0.092)])!, eyes, () => InfectedView.EYE.walker);
   }
 
   /** world matrix for a limb segment from a to b (segment geometry runs along +Y from its origin) */
@@ -289,14 +335,31 @@ export class InfectedView {
   }
   private place(k: PartKey, i: number, local: THREE.Matrix4) { this.m.multiplyMatrices(this.root, local); this.parts[k].setMatrixAt(i, this.m); }
 
+  private kindOf: (InfKind | null)[] = [];
+  private shirt!: (i: number) => THREE.Color; private pant!: (i: number) => THREE.Color;
+  private static EYE: Record<InfKind, THREE.Color> = { walker: new THREE.Color(2.2, 2.3, 0.9), runner: new THREE.Color(1.6, 2.4, 2.8), mutant: new THREE.Color(3.2, 0.4, 0.2) };
+  private static FLESH = new THREE.Color(0x6e4640);
+  /** clothes keep their per-instance colours; a mutant's bloated body is raw flesh */
+  private recolour(i: number, kind: InfKind) {
+    if (this.kindOf[i] === kind) return;
+    this.kindOf[i] = kind;
+    this.parts.eyes.setColorAt(i, InfectedView.EYE[kind]);
+    const top: PartKey[] = ['torso', 'upperL', 'upperR', 'foreL', 'foreR'], bottom: PartKey[] = ['hips', 'thighL', 'thighR', 'shinL', 'shinR'];
+    for (const k of top) this.parts[k].setColorAt(i, kind === 'mutant' ? InfectedView.FLESH : this.shirt(i));
+    for (const k of bottom) this.parts[k].setColorAt(i, kind === 'mutant' ? InfectedView.FLESH : this.pant(i));
+    for (const m of Object.values(this.parts)) if (m.instanceColor) m.instanceColor.needsUpdate = true;
+  }
+
   update(list: Infected[], time: number) {
     const n = Math.min(list.length, this.max);
     const P = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(this.root);
     for (let i = 0; i < n; i++) {
       const z = list[i];
       // whole-body pose: hunched, leaning into the chase, toppling backwards when floored or dead
+      this.recolour(i, z.kind);
       let fall = 0, lean = 0.06;
-      if (z.state === 'chase') lean = 0.2;
+      if (z.state === 'chase') lean = z.kind === 'runner' ? 0.42 : 0.2;
+      if (z.state === 'charge') lean = z.t < 0.7 ? -0.15 : 0.5;
       if (z.state === 'windup') lean = -0.05 + Math.min(1, z.t / 0.45) * 0.4;
       if (z.state === 'stagger') lean = -0.3;
       if (z.state === 'down' || z.state === 'dead') fall = Math.min(1, Math.max(0, z.t) / 0.45);
@@ -304,6 +367,8 @@ export class InfectedView {
       this.root.makeTranslation(z.x, z.y + fall * 0.15, z.z);
       this.e.set(-lean * (1 - fall) + fall * Math.PI / 2, z.yaw, 0, 'YXZ');
       this.root.multiply(this.tmp.makeRotationFromEuler(this.e));
+      const sc = KINDS[z.kind].scale;
+      this.root.multiply(this.tmp.makeScale(sc * (z.kind === 'mutant' ? 1.15 : z.kind === 'runner' ? 0.88 : 1), sc, sc)); // mutants bulk out, runners are wiry
       const right = new THREE.Vector3(1, 0, 0).transformDirection(this.root);
       const hunch = 0.35 + z.seed * 0.2, droop = (z.seed - 0.5) * 0.5;
       const ch = Math.cos(hunch), sh = Math.sin(hunch);

@@ -825,17 +825,21 @@ export class Game {
       this.body.kick();
       if (hits) { this.combo.add(power >= 12 ? 'dropkick' : 'kick'); this.slowMo(0.3, 0.12); }
     }
-    const before = this.horde.alive;
     this.horde.update(dt, { x: p.pos.x, y: p.pos.y, z: p.pos.z, alive });
-    const downed = Math.max(0, before - this.horde.alive);
-    this.kills += downed;
-    if (downed) { this.combo.add('takedown'); this.slowMo(0.25, 0.4); }
+    for (const kind of this.horde.deaths) {
+      this.kills++;
+      this.combo.add(kind === 'mutant' ? 'mutantDown' : kind === 'runner' ? 'runnerDown' : 'takedown');
+      if (kind === 'mutant') { this.ui.toast('Mutant down', '', true, 1.2); this.slowMo(0.2, 0.8); }
+      else this.slowMo(0.25, 0.4);
+    }
+    this.horde.deaths.length = 0;
     for (const e of this.horde.events) {
-      if (e.type === 'groan') this.audio.playAt('groan', e.x, e.y, e.z, 0.8, 0.9 + Math.random() * 0.2);
+      if (e.type === 'groan') this.audio.playAt('groan', e.x, e.y, e.z, e.kind === 'mutant' ? 1.1 : 0.8, (e.kind === 'runner' ? 1.35 : e.kind === 'mutant' ? 0.6 : 0.9) + Math.random() * 0.2);
       else if (e.type === 'hit' && alive) {
         this.hp -= e.dmg; this.sinceHit = 0;
         const dx = p.pos.x - e.fromX, dz = p.pos.z - e.fromZ, d = Math.hypot(dx, dz) || 1;
-        p.vel.x += dx / d * 4; p.vel.z += dz / d * 4;
+        p.vel.x += dx / d * e.knock; p.vel.z += dz / d * e.knock;
+        if (e.knock > 8) p.vel.y = Math.max(p.vel.y, 3); // a mutant's blow lifts you off your feet
         this.rig.onEvents([{ type: 'bump', speed: 4 }]);
         this.audio.playFx('hurt', 0.8);
         this.ui.flashHurt();

@@ -330,8 +330,8 @@ export class Renderer {
     fogUniforms.uNight.value = on ? 1 : 0;
     fog.color.copy(on ? new THREE.Color(0x0a0f1c) : d.fog);
     this.hemi.color.copy(on ? new THREE.Color(0x5a74b8) : d.hemiC);
-    this.hemi.intensity = on ? 0.16 : d.hemiI;
-    this.scene.environmentIntensity = on ? 0.12 : d.env;
+    this.hemi.intensity = on ? 0.38 : d.hemiI;
+    this.scene.environmentIntensity = on ? 0.22 : d.env;
     fogUniforms.fogSunColor.value.copy(on ? new THREE.Color(0x1a2238) : d.sunC);
     this.renderer.toneMappingExposure = on ? 1.15 : d.exp;
     this.applyLightColor();
@@ -348,7 +348,7 @@ export class Renderer {
     this.applyLightColor();
   }
   private applyLightColor() {
-    for (const l of this.csm?.lights ?? []) { l.color.set(this.night ? 0x9fb6ff : 0xfff1de); l.intensity = (this.night ? 0.55 : 3.4) * (this.rain ? 0.35 : 1); }
+    for (const l of this.csm?.lights ?? []) { l.color.set(this.night ? 0x9fb6ff : 0xfff1de); l.intensity = (this.night ? 0.95 : 3.4) * (this.rain ? 0.35 : 1); }
     this.scene.backgroundIntensity = (this.night ? 0.035 : this.dayBg) * (this.rain ? 0.28 : 1);
   }
 
