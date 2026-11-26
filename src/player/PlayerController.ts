@@ -83,7 +83,7 @@ export interface Ledge {
 export interface Zipline { ax: number; ay: number; az: number; bx: number; by: number; bz: number }
 
 // ---- tunables -------------------------------------------------------------------------------
-const GRAPPLE_RANGE = 26; // metres: swing between nearby buildings, not across the city
+const GRAPPLE_RANGE = 22; // metres: swing between nearby buildings, not across the city
 export const P = {
   R: 0.3,
   H_STAND: 1.8,
@@ -133,6 +133,7 @@ export class PlayerController {
   grapple: { x: number; y: number; z: number; nx: number; ny: number; nz: number } | null = null;
   ropeLen = 0;
   grappleCD = 0;
+  private airGrapples = 0;
   /** 0 dry .. 1 rain: wet roofs let slides run further */
   wet = 0;
 
@@ -198,6 +199,8 @@ export class PlayerController {
   /** +1 rides from a to b, -1 from b back to a */
   zipDir = 1;
   private zipCD = 0;
+  /** catching the cable: you're eased onto it over a moment instead of snapped */
+  private zipEase = 0; private zipOff = { x: 0, y: 0, z: 0 };
   /** death animation: which way the head falls (-1 left, 1 right) and how fast you were going */
   deathSide = 1; deathSpeed = 0;
 
@@ -310,6 +313,7 @@ export class PlayerController {
     this.coyote = Math.max(0, this.coyote - dt);
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
     this.grappleCD = Math.max(0, this.grappleCD - dt);
+    if (this.grounded) this.airGrapples = 0;
     this.zipCD = Math.max(0, this.zipCD - dt);
 
     switch (this.state) {
@@ -1277,16 +1281,21 @@ export class PlayerController {
     if (this.grappleCD > 0 || this.state === PState.Dead || this.state === PState.Grapple || this.state === PState.Traverse) return null;
     const hit = this.world.raycast(ex, ey, ez, fx, fy, fz, GRAPPLE_RANGE);
     if (!hit || hit.t < 3 || (hit.box.flags & F.DEADLY)) return null;
+    // a swing needs something to hang from: a building face or edge above you, not the ground or a floor
+    if (hit.ny > 0.7 || hit.y < ey + 1.5) return null;
+    // land before chaining more than three swings (no flying across the city)
+    if (this.airGrapples >= 3) return null;
     // pull to a point just off the surface so the body is not dragged into it
     return { x: hit.x + hit.nx * 0.5, y: hit.y + Math.max(hit.ny, 0) * 0.3, z: hit.z + hit.nz * 0.5, nx: hit.nx, ny: hit.ny, nz: hit.nz };
   }
   startGrapple(a: { x: number; y: number; z: number; nx: number; ny: number; nz: number }) {
     this.grapple = a;
     this.height = P.H_STAND;
-    // rope from the hands, taken up taut so the arc starts at once
-    this.ropeLen = Math.max(2, Math.hypot(a.x - this.pos.x, a.y - (this.pos.y + 1.5), a.z - this.pos.z) * 0.88);
-    // fired from your feet: hop off the ground into the swing, carrying your run speed
-    if (this.grounded) { this.vel.y = Math.max(this.vel.y, 4.5); this.grounded = false; }
+    // rope from the hands at its current length: no yank, the swing takes over as you drop
+    this.ropeLen = Math.max(2, Math.hypot(a.x - this.pos.x, a.y - (this.pos.y + 1.5), a.z - this.pos.z));
+    // fired from your feet: a small hop off the ground into the swing
+    if (this.grounded) { this.vel.y = Math.max(this.vel.y, 2.5); this.grounded = false; }
+    this.airGrapples++;
     this.setState(PState.Grapple);
     this.events.push({ type: 'grappleStart' });
   }
@@ -1301,23 +1310,21 @@ export class PlayerController {
     this.vel.y = Math.max(-P.TERMINAL, this.vel.y - P.G * dt);
     // pump: lean into the swing along where you look (strong, like kicking your legs on a rope)
     const w = this.wish(input);
-    if (w.mag > 0.05) { this.vel.x += w.x * 11 * dt; this.vel.z += w.z * 11 * dt; }
+    if (w.mag > 0.05) { this.vel.x += w.x * 6 * dt; this.vel.z += w.z * 6 * dt; }
     if (input.grapple) this.ropeLen = Math.max(1.2, this.ropeLen - 9 * dt);
     const dx = this.pos.x - a.x, dy = this.pos.y + 1.5 - a.y, dz = this.pos.z - a.z, d = Math.hypot(dx, dy, dz);
     const nx = dx / d, ny = dy / d, nz = dz / d;
     if (d > this.ropeLen) {
       const vr = this.vel.x * nx + this.vel.y * ny + this.vel.z * nz;
-      const pull = Math.max(vr, 0) + Math.min((d - this.ropeLen) / dt * 0.5, input.grapple ? 12 : 20);
+      const pull = Math.max(vr, 0) + Math.min((d - this.ropeLen) / dt * 0.3, input.grapple ? 9 : 6); // soft take-up, never a yank
       this.vel.x -= nx * pull; this.vel.y -= ny * pull; this.vel.z -= nz * pull;
     }
     const sp = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
-    if (sp > 32) { this.vel.x *= 32 / sp; this.vel.y *= 32 / sp; this.vel.z *= 32 / sp; }
+    if (sp > 22) { this.vel.x *= 22 / sp; this.vel.y *= 22 / sp; this.vel.z *= 22 / sp; }
     const r = this.move(dt, 0.28);
     if (this.jumpBuffer > 0 && this.stateTime > 0.1) {
-      // fling: let go with a boost along the swing and up, so a good release flies far
-      const h = this.hSpeed;
-      if (h > 1) { this.vel.x *= 1.15; this.vel.z *= 1.15; }
-      this.releaseGrapple(4.5, 0.12);
+      // let go keeping your momentum, with a little hop to clear the next ledge
+      this.releaseGrapple(2.5, 0.6);
       return;
     }
     // reeled right up to the point: hop over the edge (walls) or step onto it (floors)
@@ -1363,6 +1370,7 @@ export class PlayerController {
       // ride toward the end you are moving toward (or facing, if barely moving): lines go both ways
       const facing = (this.fwdX * dx + this.fwdZ * dz) / L;
       const dir = Math.abs(along) > 1 ? Math.sign(along) : facing < 0 ? -1 : 1;
+      this.zipEase = 0.15; this.zipOff.x = this.pos.x - (px); this.zipOff.y = this.pos.y - (py - 2.05); this.zipOff.z = this.pos.z - (pz);
       this.zip = z; this.zipT = t; this.zipDir = dir; this.zipSpeed = Math.max(4, Math.abs(along));
       this.jumpBuffer = 0; // the press that caught the line must not also count as letting go
       this.setState(PState.Zip);
@@ -1383,7 +1391,8 @@ export class PlayerController {
     this.zipSpeed = Math.min(22, Math.max(sinSlope < 0 ? 7 : 3, this.zipSpeed + acc * dt));
     this.zipT += dir * this.zipSpeed * dt / L;
     const hx = z.ax + dx * this.zipT, hy = z.ay + dy * this.zipT, hz = z.az + dz * this.zipT;
-    this.pos.x = hx; this.pos.y = hy - 2.05; this.pos.z = hz;
+    const k = this.zipEase > 0 ? (this.zipEase = Math.max(0, this.zipEase - dt)) / 0.15 : 0;
+    this.pos.x = hx + this.zipOff.x * k; this.pos.y = hy - 2.05 + this.zipOff.y * k; this.pos.z = hz + this.zipOff.z * k;
     const v = this.zipSpeed * dir / L;
     this.vel.x = dx * v; this.vel.y = dy * v; this.vel.z = dz * v;
     const release = (dir > 0 ? this.zipT >= 0.97 : this.zipT <= 0.03) || this.jumpBuffer > 0 || input.crouchPressed ||
