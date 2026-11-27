@@ -791,7 +791,7 @@ export class RunnerBody {
       }
       // holding a weapon: the animation drives the gripping hand(s) on the ground, in the air and in slides
       const H = this.held;
-      if (H && (st === PState.Ground || st === PState.Air || st === PState.Slide) && (s > 0 || H.left)) {
+      if (H && (st === PState.Ground || st === PState.Air || st === PState.Slide || st === PState.Grapple) && (s > 0 || H.left)) {
         target = (s > 0 ? H.right : H.left!).clone();
         stiff = H.stiff; curl = 0.97;
         // fist around the grip: fingers wrap across the handle, knuckles forward

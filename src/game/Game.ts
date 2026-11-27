@@ -389,14 +389,26 @@ export class Game {
     this.ui.setShards(this.save.data.shards.length, this.city.collectibles.length);
   }
 
-  // ---- grappling hook
-  private rope!: THREE.Line;
+  // ---- grappling hook: rope (thin segments that sag when slack), claw, attach flash
+  private ropeSegs!: THREE.InstancedMesh;
+  private hookMesh!: THREE.Group;
+  private flash!: THREE.Mesh; private flashT = 0;
+  private static ROPE_N = 16;
   private buildRope() {
-    this.rope = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), new THREE.LineBasicMaterial({ color: 0x222222 }));
-    this.rope.frustumCulled = false; this.rope.visible = false;
-    this.r.scene.add(this.rope);
+    const ropeMat = new THREE.MeshStandardMaterial({ color: 0x1c1d20, roughness: 0.8 });
+    const seg = new THREE.CylinderGeometry(0.013, 0.013, 1, 5); seg.translate(0, 0.5, 0);
+    this.ropeSegs = new THREE.InstancedMesh(seg, ropeMat, Game.ROPE_N);
+    this.ropeSegs.frustumCulled = false; this.ropeSegs.visible = false;
+    this.hookMesh = new THREE.Group();
+    const steel = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, metalness: 0.9, roughness: 0.3 });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.16, 6), steel);
+    for (let k = 0; k < 3; k++) { const prong = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.12, 4), steel); prong.position.set(Math.cos(k * 2.1) * 0.04, 0.06, Math.sin(k * 2.1) * 0.04); prong.rotation.z = Math.cos(k * 2.1) * 0.9; prong.rotation.x = -Math.sin(k * 2.1) * 0.9; this.hookMesh.add(prong); }
+    this.hookMesh.add(shaft); this.hookMesh.visible = false;
+    this.flash = new THREE.Mesh(new THREE.SphereGeometry(0.25, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd8a0, transparent: true, opacity: 0, depthWrite: false, toneMapped: false }));
+    this.flash.visible = false;
+    this.r.scene.add(this.ropeSegs, this.hookMesh, this.flash);
   }
-  /** aim highlight, fire on press, draw the rope while reeling in */
+  private ropeTmp = { m: new THREE.Matrix4(), q: new THREE.Quaternion(), a: new THREE.Vector3(), b: new THREE.Vector3(), d: new THREE.Vector3(), s: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0) };
   /** rain setting: visuals, wet shading, sound and slide grip (menus stay dry) */
   private applyWeather() {
     const on = this.save.settings.rain && this.mode !== 'attract';
@@ -405,20 +417,46 @@ export class Game {
     this.audio.setRain(on);
     this.player.wet = on ? 1 : 0;
   }
+  /** aim, fire / release on press, and draw rope + hook from the real hand */
   private updateGrapple(f: { grapplePressed: boolean }) {
     const p = this.player, cam = this.r.camera;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
     const target = p.grappleTarget(cam.position.x, cam.position.y, cam.position.z, fwd.x, fwd.y, fwd.z);
-    this.ui.reticle.classList.toggle('grapple', !!target); // red crosshair: something to grapple in range
-    if (f.grapplePressed && target) { p.startGrapple(target); this.audio.playUi('whoosh', 0.5); }
-    this.rope.visible = p.state === PState.Grapple && !!p.grapple;
-    if (this.rope.visible) {
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
-      const hand = cam.position.clone().addScaledVector(right, 0.25).addScaledVector(fwd, 0.4).add(new THREE.Vector3(0, -0.25, 0));
-      const pos = this.rope.geometry.getAttribute('position') as THREE.BufferAttribute;
-      pos.setXYZ(0, hand.x, hand.y, hand.z); pos.setXYZ(1, p.grapple!.x, p.grapple!.y, p.grapple!.z); pos.needsUpdate = true;
+    this.ui.reticle.classList.toggle('grapple', !!target); // red ring: something to grapple in range
+    if (f.grapplePressed) {
+      if (target) { p.fireHook(target); this.audio.playUi('whoosh', 0.5); }
+      else if (p.state === PState.Grapple) p.releaseGrapple(0, 0.1); // tap again: let go, keep your speed
     }
+    for (const e of this.frameEvents) if (e.type === 'grappleStart' && p.grapple) { this.flash.position.set(p.grapple.x, p.grapple.y, p.grapple.z); this.flashT = 0.25; this.audio.playFx('kick', 0.25); }
+    this.flashT = Math.max(0, this.flashT - 1 / 60);
+    this.flash.visible = this.flashT > 0;
+    if (this.flash.visible) { (this.flash.material as THREE.MeshBasicMaterial).opacity = this.flashT / 0.25; this.flash.scale.setScalar(1 + (0.25 - this.flashT) * 6); }
+    // rope: from the right hand to the hook (in flight) or the anchor
+    const end = p.hook ? p.hook : p.state === PState.Grapple ? p.grapple : null;
+    this.ropeSegs.visible = this.hookMesh.visible = !!end;
+    if (!end) return;
+    const T = this.ropeTmp;
+    const hand = T.a.copy(this.body.rightHandView).applyMatrix4(cam.matrixWorld);
+    const tip = T.b.set(end.x, end.y, end.z);
+    const len = hand.distanceTo(tip);
+    // sag: a slack rope (hook still flying, or anchor closer than the rope length) droops
+    const slack = p.hook ? Math.min(1.2, len * 0.04) : Math.max(0, Math.min(2, (p.ropeLen - len) * 0.5));
+    const N = Game.ROPE_N;
+    let prev = T.d.copy(hand);
+    for (let i = 1; i <= N; i++) {
+      const u = i / N;
+      const pt = T.s.copy(hand).lerp(tip, u); pt.y -= Math.sin(u * Math.PI) * slack;
+      const dir = pt.clone().sub(prev), l = dir.length();
+      T.q.setFromUnitVectors(T.up, dir.divideScalar(l || 1));
+      T.m.compose(prev, T.q, new THREE.Vector3(1, l, 1));
+      this.ropeSegs.setMatrixAt(i - 1, T.m);
+      prev = prev.copy(pt);
+    }
+    this.ropeSegs.instanceMatrix.needsUpdate = true;
+    this.hookMesh.position.copy(tip);
+    this.hookMesh.quaternion.setFromUnitVectors(T.up, T.d.copy(tip).sub(hand).normalize());
   }
+
 
   // ---- story
   private story: Story | null = null;
@@ -928,8 +966,16 @@ export class Game {
     const armed = (this.nightRun || !!this.story) && !!this.weapons.held;
     const holdOk = armed && (p.state === PState.Ground || p.state === PState.Air || p.state === PState.Slide);
     this.body.held = holdOk ? this.weapons.handTargets() : null;
+    // grappling: the right arm reaches along the rope toward the hook / anchor
+    const gEnd = p.hook ?? (p.state === PState.Grapple ? p.grapple : null);
+    if (gEnd) {
+      const inv = this.r.camera.matrixWorldInverse;
+      const dirV = new THREE.Vector3(gEnd.x, gEnd.y, gEnd.z).applyMatrix4(inv).normalize();
+      const right = new THREE.Vector3(0.19, -0.25, 0.13).addScaledVector(dirV, 0.5);
+      this.body.held = { right, left: p.hook ? null : right.clone().add(new THREE.Vector3(-0.1, -0.12, 0.08)), blade: dirV, stiff: 45 };
+    }
     this.body.update(dt, p, this.r.camera.matrixWorld, this.rig.eyePos, this.feetInterp);
-    this.weapons.attach(this.body.rightHandView, holdOk);
+    this.weapons.attach(this.body.rightHandView, holdOk && !gEnd);
     // PB ghost
     if (this.raceGhost && this.mode === 'trial') {
       this.raceGhost.seek(this.trialTime);
