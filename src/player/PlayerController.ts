@@ -83,7 +83,7 @@ export interface Ledge {
 export interface Zipline { ax: number; ay: number; az: number; bx: number; by: number; bz: number }
 
 // ---- tunables -------------------------------------------------------------------------------
-const GRAPPLE_RANGE = 22; // metres: swing between nearby buildings, not across the city
+const GRAPPLE_RANGE = 35; // metres
 export const P = {
   R: 0.3,
   H_STAND: 1.8,
@@ -133,7 +133,7 @@ export class PlayerController {
   grapple: { x: number; y: number; z: number; nx: number; ny: number; nz: number } | null = null;
   ropeLen = 0;
   grappleCD = 0;
-  private airGrapples = 0;
+  private flungT = 0;
   /** 0 dry .. 1 rain: wet roofs let slides run further */
   wet = 0;
 
@@ -313,7 +313,7 @@ export class PlayerController {
     this.coyote = Math.max(0, this.coyote - dt);
     this.wallCooldown = Math.max(0, this.wallCooldown - dt);
     this.grappleCD = Math.max(0, this.grappleCD - dt);
-    if (this.grounded) this.airGrapples = 0;
+    this.flungT = Math.max(0, this.flungT - dt);
     this.zipCD = Math.max(0, this.zipCD - dt);
 
     switch (this.state) {
@@ -578,8 +578,9 @@ export class PlayerController {
     this.grounded = true;
     this.lastImpact = impact;
     const deadly = !!(g.flags & F.DEADLY);
-    const rollWanted = input.crouch || this.crouchBufferT < P.ROLL_WINDOW;
-    const fatal = deadly ? impact > 10 : (rollWanted ? impact > P.FATAL_LAND_ROLL : impact > P.FATAL_LAND);
+    // after a grapple fling the landing rolls by itself (up to the usual roll limit)
+    const rollWanted = input.crouch || this.crouchBufferT < P.ROLL_WINDOW || this.flungT > 0;
+    const fatal = deadly ? impact > 10 : this.flungT > 0 ? impact > 30 : (rollWanted ? impact > P.FATAL_LAND_ROLL : impact > P.FATAL_LAND);
     if (fatal) { this.vel.y = 0; this.die('fall'); return; }
     const s = this.hSpeed;
     if (impact > 9 && rollWanted) {
@@ -1281,10 +1282,6 @@ export class PlayerController {
     if (this.grappleCD > 0 || this.state === PState.Dead || this.state === PState.Grapple || this.state === PState.Traverse) return null;
     const hit = this.world.raycast(ex, ey, ez, fx, fy, fz, GRAPPLE_RANGE);
     if (!hit || hit.t < 3 || (hit.box.flags & F.DEADLY)) return null;
-    // a swing needs something to hang from: a building face or edge above you, not the ground or a floor
-    if (hit.ny > 0.7 || hit.y < ey + 1.5) return null;
-    // land before chaining more than three swings (no flying across the city)
-    if (this.airGrapples >= 3) return null;
     // pull to a point just off the surface so the body is not dragged into it
     return { x: hit.x + hit.nx * 0.5, y: hit.y + Math.max(hit.ny, 0) * 0.3, z: hit.z + hit.nz * 0.5, nx: hit.nx, ny: hit.ny, nz: hit.nz };
   }
@@ -1295,7 +1292,6 @@ export class PlayerController {
     this.ropeLen = Math.max(2, Math.hypot(a.x - this.pos.x, a.y - (this.pos.y + 1.5), a.z - this.pos.z));
     // fired from your feet: a small hop off the ground into the swing
     if (this.grounded) { this.vel.y = Math.max(this.vel.y, 2.5); this.grounded = false; }
-    this.airGrapples++;
     this.setState(PState.Grapple);
     this.events.push({ type: 'grappleStart' });
   }
@@ -1305,36 +1301,47 @@ export class PlayerController {
    * the velocity that would stretch it), so falling turns into a pendulum arc. Hold grapple to
    * reel in (up a wall to its edge); jump lets go keeping all momentum, ready to fire again.
    */
+  /**
+   * Rope swing. The rope is a rigid length constraint: gravity and your input act freely, and when it's
+   * taut only the outward part of your velocity is removed (plus a stiff correction back onto the rope),
+   * so a fall turns into a full-energy pendulum arc. W pumps along the arc; holding grapple reels in,
+   * which speeds the swing up the way pulling in on a rope does. Jump lets go with a fling.
+   */
   private updateGrapple(dt: number, input: InputFrame) {
     const a = this.grapple!;
     this.vel.y = Math.max(-P.TERMINAL, this.vel.y - P.G * dt);
-    // pump: lean into the swing along where you look (strong, like kicking your legs on a rope)
+    let dx = this.pos.x - a.x, dy = this.pos.y + 1.5 - a.y, dz = this.pos.z - a.z;
+    const d = Math.hypot(dx, dy, dz) || 1e-3;
+    dx /= d; dy /= d; dz /= d;
+    // pump: your input along the arc (perpendicular to the rope), like kicking on a swing
     const w = this.wish(input);
-    if (w.mag > 0.05) { this.vel.x += w.x * 6 * dt; this.vel.z += w.z * 6 * dt; }
-    if (input.grapple) this.ropeLen = Math.max(1.2, this.ropeLen - 9 * dt);
-    const dx = this.pos.x - a.x, dy = this.pos.y + 1.5 - a.y, dz = this.pos.z - a.z, d = Math.hypot(dx, dy, dz);
-    const nx = dx / d, ny = dy / d, nz = dz / d;
-    if (d > this.ropeLen) {
-      const vr = this.vel.x * nx + this.vel.y * ny + this.vel.z * nz;
-      const pull = Math.max(vr, 0) + Math.min((d - this.ropeLen) / dt * 0.3, input.grapple ? 9 : 6); // soft take-up, never a yank
-      this.vel.x -= nx * pull; this.vel.y -= ny * pull; this.vel.z -= nz * pull;
+    if (w.mag > 0.05) {
+      const along = w.x * dx + w.z * dz;
+      const tx = w.x - dx * along, ty = -dy * along, tz = w.z - dz * along;
+      this.vel.x += tx * 14 * dt; this.vel.y += ty * 14 * dt; this.vel.z += tz * 14 * dt;
+    }
+    if (input.grapple) this.ropeLen = Math.max(1.2, this.ropeLen - 14 * dt);
+    if (d >= this.ropeLen) {
+      // taut: no stretching (remove outward speed) and pull back onto the rope length
+      const vr = this.vel.x * dx + this.vel.y * dy + this.vel.z * dz;
+      const pull = Math.max(vr, 0) + Math.min((d - this.ropeLen) / dt, 30);
+      this.vel.x -= dx * pull; this.vel.y -= dy * pull; this.vel.z -= dz * pull;
     }
     const sp = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
-    if (sp > 22) { this.vel.x *= 22 / sp; this.vel.y *= 22 / sp; this.vel.z *= 22 / sp; }
+    if (sp > 40) { this.vel.x *= 40 / sp; this.vel.y *= 40 / sp; this.vel.z *= 40 / sp; }
     const r = this.move(dt, 0.28);
-    if (this.jumpBuffer > 0 && this.stateTime > 0.1) {
-      // let go keeping your momentum, with a little hop to clear the next ledge
-      this.releaseGrapple(2.5, 0.6);
+    if (this.jumpBuffer > 0 && this.stateTime > 0.08) {
+      // fling: let go faster than you were swinging, and up
+      this.vel.x *= 1.2; this.vel.z *= 1.2; this.vel.y = Math.min(Math.max(this.vel.y, 0) * 1.2 + 3, 25);
+      this.releaseGrapple(0, 0.15);
       return;
     }
     // reeled right up to the point: hop over the edge (walls) or step onto it (floors)
     if (d < 1.7 && input.grapple) {
-      // walls: launch up and in, over the edge onto the top (or into a ledge grab)
       if (a.ny < 0.7) { this.vel.x = -a.nx * 3.5; this.vel.z = -a.nz * 3.5; }
-      this.releaseGrapple(a.ny > 0.7 ? 2 : 8, 0.4);
+      this.releaseGrapple(a.ny > 0.7 ? 2 : 8, 0.15);
       return;
     }
-    if (this.stateTime > 8) { this.releaseGrapple(0, 0.4); return; }
     // touching down ends the swing; while reeling, brushing a ledge on the way up does not
     if (r.grounded && this.vel.y <= 0.5 && !input.grapple && this.stateTime > 0.25) {
       this.grapple = null; this.ground = r.ground; this.setState(PState.Ground); this.grounded = true;
@@ -1343,7 +1350,8 @@ export class PlayerController {
   }
   private releaseGrapple(hop: number, cooldown: number) {
     this.jumpBuffer = 0;
-    this.vel.y = Math.min(Math.max(this.vel.y, -2) + hop, 13); // ~4 m of rise: clears a roof edge and parapet, no fling into the sky
+    this.flungT = 3;
+    if (hop) this.vel.y = Math.min(Math.max(this.vel.y, -2) + hop, 13);
     this.grapple = null; this.grappleCD = cooldown;
     this.setState(PState.Air); this.airEntrySpeed = Math.max(this.hSpeed, 5); this.airTime = 0; this.fallStartY = this.pos.y;
     this.events.push({ type: 'grappleEnd' });

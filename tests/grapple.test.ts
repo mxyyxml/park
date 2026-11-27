@@ -17,7 +17,6 @@ describe('grappling hook (any surface)', () => {
     expect(p.grappleTarget(cx, 1.6, bl.minZ - 10, 0, 0.6, 0.8)).not.toBeNull(); // facade 10 m ahead, aiming up
     expect(p.grappleTarget(cx, 1.6, bl.minZ - 1.5, 0, 0.6, 0.8)).toBeNull();  // too close
     expect(p.grappleTarget(cx, 1.6, bl.minZ - 10, 0, 1, 0)).toBeNull();     // open sky
-    expect(p.grappleTarget(cx, 1.6, bl.minZ - 10, 0, -0.3, 0.95)).toBeNull(); // the street: nothing to swing from
   });
 
   it('from the street, grappling the top of a facade gets you onto the roof', () => {
@@ -64,7 +63,7 @@ describe('grappling hook (any surface)', () => {
     for (let i = 0; i < 120 * 1.6; i++) { p.update(1 / 120, emptyInput()); maxSpeed = Math.max(maxSpeed, p.hSpeed); minY = Math.min(minY, p.pos.y); }
     expect(p.state).toBe(PState.Grapple);
     expect(maxSpeed).toBeGreaterThan(9);           // the arc turns height into speed
-    expect(maxSpeed).toBeLessThanOrEqual(22.01);   // but never a slingshot
+    expect(maxSpeed).toBeLessThanOrEqual(40.01);
     expect(p.pos.z).toBeLessThan(-20);             // carried past under the anchor
     expect(minY).toBeGreaterThan(1);               // the rope held you off the floor
     const f = emptyInput(); f.jump = f.jumpPressed = true;
@@ -86,7 +85,7 @@ describe('grappling hook (any surface)', () => {
     expect(p.state).toBe(PState.Grapple);
   });
 
-  it('no flying across the map: three swings, then you have to touch down', () => {
+  it('swings chain without limit', () => {
     const w = new CollisionWorld();
     for (let k = 0; k < 6; k++) w.add(-3, 36, -15 - k * 12, 3, 37, -13 - k * 12); // a row of beams overhead
     w.add(-300, -1, -300, 300, 0, 300);
@@ -104,6 +103,23 @@ describe('grappling hook (any surface)', () => {
       const f = emptyInput(); f.jump = f.jumpPressed = true; p.update(1 / 120, f);
       for (let i = 0; i < 120 * 0.7; i++) p.update(1 / 120, emptyInput());
     }
-    expect(fired).toBe(3);
+    expect(fired).toBeGreaterThan(3); // past the old three-swing limit (the flings outrun the row of beams)
+  });
+
+  it('the rope is rigid and keeps the swing\'s energy: released level, you swing back up close to that height', () => {
+    const w = new CollisionWorld(); w.add(-3, 40, -1, 3, 41, 1); w.add(-300, -1, -300, 300, 0, 300);
+    const p = new PlayerController(w);
+    p.spawn(12, 39 - 1.5, 0, 0); p.vel.x = p.vel.y = p.vel.z = 0; // hands level with the anchor, 12 m out
+    p.startGrapple({ x: 0, y: 39.7, z: 0, nx: 0, ny: -1, nz: 0 });
+    let minY = 99, maxLen = 0, top = -99;
+    for (let i = 0; i < 120 * 2.6; i++) {
+      p.update(1 / 120, emptyInput());
+      minY = Math.min(minY, p.pos.y);
+      maxLen = Math.max(maxLen, Math.hypot(p.pos.x, p.pos.y + 1.5 - 39.7, p.pos.z));
+      if (p.pos.x < 0) top = Math.max(top, p.pos.y);
+    }
+    expect(maxLen).toBeLessThan(12.6);           // no stretch
+    expect(minY).toBeGreaterThan(39 - 1.5 - 12.5); // bottom of the arc is a rope length down
+    expect(top).toBeGreaterThan(39 - 1.5 - 3);   // swings most of the way back up the far side
   });
 });
