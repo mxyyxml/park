@@ -114,7 +114,7 @@ export class UI {
   private nextRadio() {
     const l = this.radioQ[0];
     if (!l) { this.radioEl.classList.add('hidden'); return; }
-    this.radioEl.innerHTML = `<b class="${l.who === 'KAI' ? 'kai' : ''}">${l.who}</b> ${l.text}`;
+    this.radioEl.innerHTML = `<b class="${l.who.toLowerCase()}">${l.who}</b> ${l.text}`;
     this.radioEl.classList.remove('hidden');
     this.radioTimer = window.setTimeout(() => { this.radioQ.shift(); this.nextRadio(); }, 2200 + l.text.length * 45);
   }
@@ -130,10 +130,21 @@ export class UI {
     this.open(p);
   }
 
-  storyEnd(o: { kills: number; onBack: () => void }) {
+  storyChoice(prompt: string, options: [string, string], pick: (i: 0 | 1) => void) {
+    const p = el('div', { class: 'panel' });
+    p.append(el('div', { class: 'tag' }), el('h1', {}, 'THE<br><b>RELAY</b>'), el('h2', {}, prompt));
+    p.append(this.button(options[0], () => pick(0), 'primary'), this.button(options[1], () => pick(1)));
+    this.open(p);
+  }
+
+  storyEnd(o: { ending: 'broadcast' | 'deal'; kills: number; onBack: () => void }) {
     const p = el('div', { class: 'panel results' });
-    p.append(el('div', { class: 'tag' }), el('h1', {}, 'SIGNAL<br><b>SENT</b>'));
-    p.append(el('div', { class: 'foot' }, `The broadcast went out over the district at dawn. The helicopters landed on the roofs, and the people who had held out up there for three days came out to meet them.<br><br>Infected you put down tonight: ${o.kills}<br><br>LAST SIGNAL · thanks for playing`));
+    const broadcast = o.ending === 'broadcast';
+    p.append(el('div', { class: 'tag' }), el('h1', {}, broadcast ? 'SIGNAL<br><b>SENT</b>' : 'THE<br><b>TRADE</b>'));
+    p.append(el('div', { class: 'foot' }, (broadcast
+      ? 'The proof went out on every screen in Meridian before dawn. By noon the crowds were at the gates, and by evening the gates were open. Halden\'s guards left first. Theo was not among the people carried out of the Spire. Vesper says the Lanterns are still looking. So are you.'
+      : 'Hale kept his word, exactly as far as he had to. Theo walked out onto the roof thinner and quieter than you remembered, and the helicopter took you both over the wall. Behind you the quarantine held, and the story held with it. Some nights you still hear the relay hum.')
+      + `<br><br>Infected you put down: ${o.kills}<br><br>LAST SIGNAL · ${broadcast ? 'ending: Signal' : 'ending: Trade'} · thanks for playing`));
     p.append(this.button('Main menu', o.onBack, 'primary'));
     this.open(p);
   }

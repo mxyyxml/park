@@ -17,7 +17,7 @@ import { buildTrials, TrialDef } from './Trials';
 import { Horde, InfectedView } from './Infected';
 import { Combo } from './Combo';
 import { Weapons, ITEM_NAME, type Item, type ItemKind } from './Weapons';
-import { Story, CHAPTERS, type StoryPlaces, type Vec as SVec } from './Story';
+import { Story, CHAPTERS, VOICE_LOGS, type StoryPlaces, type Vec as SVec, type Ending } from './Story';
 import { Rain } from '../world/Rain';
 import { Bot } from './Bot';
 import { decodeGhost, encodeGhost, ghostCode, GhostPlayback, GhostRecorder, parseGhostCode } from './Ghost';
@@ -470,21 +470,61 @@ export class Game {
     const mid = { x: (stash.x + spireTop.x) / 2, z: (stash.z + spireTop.z) / 2 };
     const cps = this.trials.flatMap((t) => t.checkpoints).filter((c) => c.y < 40);
     const supplies = cps.sort((a, b) => Math.hypot(a.x - mid.x, a.z - mid.z) - Math.hypot(b.x - mid.x, b.z - mid.z))[0];
-    return { stash, shards, supplies, spireTop };
+    const race = this.trials.find((t) => t.id === 'crosstown') ?? this.trials[1];
+    return { stash, shards, supplies, spireTop, raceFinish: race.checkpoints.at(-1)! };
+  }
+  // ---- Vesper: a rival runner driven by the autopilot along a trial route, drawn with the full body
+  private rival: { p: PlayerController; bot: Bot; acc: number } | null = null;
+  private startRival(mode: 'chase' | 'race' | null) {
+    this.rival = null;
+    this.showBody.setVisible(false);
+    if (!mode) return;
+    const route = (mode === 'chase' ? this.trials.find((t) => t.id === 'spire') : this.trials.find((t) => t.id === 'crosstown')) ?? this.trials[0];
+    const rp = new PlayerController(this.builder.world);
+    rp.ziplines = this.builder.ziplines;
+    rp.spawn(route.start.x, route.start.y, route.start.z, route.start.yaw);
+    const bot = new Bot(this.builder.world, route.wps);
+    if (mode === 'chase') for (let i = 0; i < 120 * 1.6; i++) rp.update(DT, bot.step(rp, DT)); // a head start
+    // you start at the line: behind Vesper for the chase, beside her for the race
+    const st = route.start, side = mode === 'race' ? 1.6 : 0;
+    this.player.spawn(st.x + Math.cos(st.yaw) * side, st.y, st.z - Math.sin(st.yaw) * side, st.yaw);
+    this.rival = { p: rp, bot, acc: 0 };
+    this.showBody.setVisible(true);
+  }
+  private updateRival(dt: number) {
+    const R = this.rival;
+    if (!R) return null;
+    R.acc += dt;
+    while (R.acc >= DT) { R.p.update(DT, R.bot.step(R.p, DT)); R.acc -= DT; }
+    if (R.p.state === PState.Dead) { const l = R.p.lastSafe; R.p.spawn(l.x, l.y, l.z, l.yaw); }
+    this.driveShowBody(dt, R.p);
+    return { x: R.p.pos.x, y: R.p.pos.y, z: R.p.pos.z, finished: R.bot.done };
   }
   startStory(chapter: number) {
     this.startFree();
     this.weapons.reset();
     // resuming a later chapter: you already found what came before
     if (chapter >= 1) this.weapons.give('katana');
-    if (chapter >= 3) this.weapons.give('flares');
+    if (chapter >= 5) this.weapons.give('flares');
     const P = this.storyPlaces();
-    const spawnAt = [this.city.spawn, P.stash, P.shards[2], P.spireTop][chapter];
+    // where each chapter resumes (the chase and race place you at their start line themselves)
+    const spawnAt = [this.city.spawn, P.stash, P.stash, P.stash, P.raceFinish, P.spireTop][chapter];
     this.player.spawn(spawnAt.x, spawnAt.y, spawnAt.z, 'yaw' in spawnAt ? (spawnAt as { yaw: number }).yaw : 0);
     const spire = this.city.buildings[this.city.special.spire];
     this.story = new Story(P, {
       say: (lines) => this.ui.radio(lines),
-      objective: (text, target) => { this.storyObj = { text, target }; this.ui.setCheckpoints(0, 0, `${CHAPTERS[this.story?.chapter ?? chapter].toUpperCase()}<br>${text}`); },
+      objective: (text, target, timer) => { this.storyObj = { text, target }; this.ui.setCheckpoints(0, 0, `${CHAPTERS[this.story?.chapter ?? chapter].toUpperCase()}<br>${text}`); this.ui.setTimer(timer ?? null); },
+      rival: (mode) => this.startRival(mode),
+      fail: (why) => {
+        if (this.storyFailT > 0) return;
+        this.storyFailT = 2.2;
+        this.ui.toast(why, 'retrying the chapter', true, 2.2);
+        this.ui.setFade(0.6, true);
+      },
+      choose: (prompt, options) => {
+        this.paused = true; this.input.unlock();
+        this.ui.storyChoice(prompt, options, (i) => { this.paused = false; this.ui.closeMenu(); this.input.lock(); this.story?.choose(i); });
+      },
       // story items appear on the ground at your feet: free slots fill by themselves, a full inventory asks to swap
       give: (item) => this.dropItem({ kind: item, count: item === 'flares' ? 3 : 1 }, this.player.pos, item === 'flares' ? 0.9 : item === 'pipe' ? -0.9 : 0),
       night: (on) => {
@@ -499,7 +539,7 @@ export class Game {
         const ex = cx + Math.cos(a) * k * 0.98, ez = cz + Math.sin(a) * k * 0.98, top = this.builder.world.groundHeight(ex - Math.cos(a), ez - Math.sin(a), spire.h + 20, 30);
         this.horde.addClimber(ex, top ? top.y : spire.h, ez, -Math.cos(a), -Math.sin(a));
       },
-      end: () => this.storyEnd(),
+      end: (ending) => this.storyEnd(ending),
     });
     this.save.data.storyChapter = Math.max(this.save.data.storyChapter ?? 0, chapter); this.save.flush();
     this.story.start(chapter);
@@ -524,25 +564,29 @@ export class Game {
     const s = this.story!, p = this.player;
     // day chapters: weapons still switch and swing (nothing to hit until night)
     if (!this.nightRun) this.updateWeapons(dt, f);
-    s.update(dt, p.pos, p.state !== PState.Dead);
+    const rival = this.updateRival(dt);
+    if (this.storyFailT > 0 && (this.storyFailT -= dt) <= 0) { const ch = s.chapter; this.ui.setFade(0); this.startStory(ch); return; } // retry the chapter
+    if (this.storyFailT <= 0) s.update(dt, p.pos, p.state !== PState.Dead, rival);
     // caches disappear once taken
-    if (this.pickups.length === 2) { this.pickups[0].visible = s.chapter === 0; this.pickups[1].visible = s.chapter === 2 && s.step === 0; }
+    if (this.pickups.length === 2) { this.pickups[0].visible = s.chapter === 0; this.pickups[1].visible = s.chapter === 4 && s.step === 0; }
     for (const o of this.pickups) o.rotation.y += dt;
     const t = this.storyObj.target;
     this.pointMarker(t ? new THREE.Vector3(t.x, t.y + 1.2, t.z) : null);
-    if (s.chapter === 3) this.ui.setTimer(null);
   }
-  private storyEnd() {
+  private storyFailT = 0;
+  private storyEnd(ending: Ending) {
     this.save.data.storyChapter = 0; this.save.data.storyDone = true; this.save.flush();
     setTimeout(() => {
       if (!this.story) return;
       this.paused = true; this.input.unlock(); this.audio.suspend();
-      this.ui.storyEnd({ kills: this.kills, onBack: () => { this.audio.resume(); this.toMenu(); } });
-    }, 6000);
+      this.ui.storyEnd({ ending, kills: this.kills, onBack: () => { this.audio.resume(); this.toMenu(); } });
+    }, 9000);
   }
   private endStoryState() {
     if (!this.story) return;
     this.clearGround();
+    this.startRival(null);
+    this.storyFailT = 0;
     this.story = null;
     for (const o of this.pickups) this.disposeItem(o);
     this.pickups = [];
@@ -1000,7 +1044,8 @@ export class Game {
         if (this.challenge === 'rush') this.rushCount++;
         this.save.flush();
         this.audio.playUi('collect', 0.45);
-        this.ui.toast('Data shard', `${this.save.data.shards.length} / ${this.city.collectibles.length}`, true);
+        this.ui.toast('Voice log', `${this.save.data.shards.length} / ${this.city.collectibles.length}`, true);
+        this.ui.radio([VOICE_LOGS[s.id % VOICE_LOGS.length]]);
         this.ui.setShards(this.save.data.shards.length, this.city.collectibles.length);
       }
     }
