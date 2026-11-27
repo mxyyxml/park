@@ -35,6 +35,7 @@ export type InfEvent = { type: 'hit'; dmg: number; knock: number; fromX: number;
 
 const R = 0.32, H = 1.7, G = 24;
 const REACH = 1.25, HIT_RANGE = 1.75, LEVEL = 1.6;
+const DETOURS = [0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4]; // steering offsets tried when the way ahead is blocked
 
 function rng(seed: number) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
@@ -77,7 +78,8 @@ export class Horde {
   /** move with collision; `edgeSafe` refuses steps that would walk off a roof */
   private move(z: Infected, dx: number, dz: number, edgeSafe: boolean): number {
     const x0 = z.x, z0 = z.z;
-    for (const [mx, mz] of [[dx, 0], [0, dz]]) {
+    for (let axis = 0; axis < 2; axis++) { // x then z, so walls slide you along them
+      const mx = axis === 0 ? dx : 0, mz = axis === 0 ? 0 : dz;
       if (mx === 0 && mz === 0) continue;
       const nx = z.x + mx, nz = z.z + mz;
       if (this.world.overlapCylinder(nx, z.y + 0.4, nz, R, H - 0.45)) {
@@ -100,7 +102,9 @@ export class Horde {
     z.detourT -= dt;
     if (z.detourT <= 0) z.detour = 0;
     const want = sp * dt;
-    for (const off of z.detour ? [z.detour] : [0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4]) {
+    const tries = z.detour ? 1 : DETOURS.length;
+    for (let k = 0; k < tries; k++) {
+      const off = z.detour || DETOURS[k];
       const a = yaw + off;
       const ox = z.x, oz = z.z;
       if (this.move(z, -Math.sin(a) * want, -Math.cos(a) * want, true) > want * 0.5) {
@@ -330,7 +334,7 @@ export class InfectedView {
   group = new THREE.Group();
   private parts = {} as Record<PartKey, THREE.InstancedMesh>;
   private root = new THREE.Matrix4(); private m = new THREE.Matrix4(); private tmp = new THREE.Matrix4();
-  private e = new THREE.Euler(); private q = new THREE.Quaternion(); private one = new THREE.Vector3(1, 1, 1);
+  private e = new THREE.Euler(); private q = new THREE.Quaternion(); private one = new THREE.Vector3(1, 1, 1); private headM = new THREE.Matrix4();
 
   constructor(private max: number, assets: CharacterAssets | null = null) {
     this.group.name = 'infected';
@@ -380,13 +384,18 @@ export class InfectedView {
   }
 
   /** world matrix for a limb segment from a to b (segment geometry runs along +Y from its origin) */
+  // scratch objects: posing runs for every body every frame, so nothing here allocates
+  private sx = new THREE.Vector3(); private sy = new THREE.Vector3(); private sz = new THREE.Vector3();
+  private pool = Array.from({ length: 32 }, () => new THREE.Vector3()); private pi = 0;
+  private v(x: number, y: number, z: number) { return this.pool[this.pi++].set(x, y, z); }
   private seg(k: PartKey, i: number, a: THREE.Vector3, b: THREE.Vector3, right: THREE.Vector3) {
-    const y = b.clone().sub(a); const len = y.length(); y.divideScalar(len || 1);
-    let x = new THREE.Vector3().crossVectors(y, right); if (x.lengthSq() < 1e-6) x.set(1, 0, 0); x.normalize();
-    const z = new THREE.Vector3().crossVectors(x, y).normalize();
+    const y = this.sy.subVectors(b, a); const len = y.length(); y.divideScalar(len || 1);
+    const x = this.sx.crossVectors(y, right); if (x.lengthSq() < 1e-6) x.set(1, 0, 0); x.normalize();
+    const z = this.sz.crossVectors(x, y).normalize();
     this.m.makeBasis(x, y, z).setPosition(a);
     this.parts[k].setMatrixAt(i, this.m);
   }
+  private static SIDES = [[-1, 'upperL', 'foreL', 'wristL', 'handL', 'thighL', 'shinL', 'shoeL'], [1, 'upperR', 'foreR', 'wristR', 'handR', 'thighR', 'shinR', 'shoeR']] as const;
   private place(k: PartKey, i: number, local: THREE.Matrix4) { this.m.multiplyMatrices(this.root, local); this.parts[k].setMatrixAt(i, this.m); }
 
   private kindOf: (InfKind | null)[] = [];
@@ -406,9 +415,10 @@ export class InfectedView {
 
   update(list: Infected[], time: number) {
     const n = Math.min(list.length, this.max);
-    const P = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(this.root);
+    const P = (x: number, y: number, z: number) => this.v(x, y, z).applyMatrix4(this.root);
     for (let i = 0; i < n; i++) {
       const z = list[i];
+      this.pi = 0;
       // whole-body pose: hunched, leaning into the chase, toppling backwards when floored or dead
       this.recolour(i, z.kind);
       let fall = 0, lean = 0.06;
@@ -423,7 +433,7 @@ export class InfectedView {
       this.root.multiply(this.tmp.makeRotationFromEuler(this.e));
       const sc = KINDS[z.kind].scale;
       this.root.multiply(this.tmp.makeScale(sc * (z.kind === 'mutant' ? 1.15 : z.kind === 'runner' ? 0.88 : 1), sc, sc)); // mutants bulk out, runners are wiry
-      const right = new THREE.Vector3(1, 0, 0).transformDirection(this.root);
+      const right = this.v(1, 0, 0).transformDirection(this.root);
       const hunch = 0.35 + z.seed * 0.2, droop = (z.seed - 0.5) * 0.5;
       const ch = Math.cos(hunch), sh = Math.sin(hunch);
       const up = (x: number, y: number, zz: number) => P(x, 0.95 + y * ch, -y * sh + zz); // upper body, hunched about the pelvis
@@ -432,32 +442,31 @@ export class InfectedView {
       // hips, torso, head
       this.place('hips', i, this.tmp.makeTranslation(0, 0.95, 0));
       this.e.set(-hunch, 0, 0); this.place('torso', i, this.tmp.makeRotationFromEuler(this.e).setPosition(0, 0.98, 0));
-      const hp = up(0, 0.72, 0.02);
+      // head in the body's own frame (no inverse needed)
       this.e.set(-hunch * 0.4 + 0.25, 0, droop, 'YXZ');
-      const headM = new THREE.Matrix4().compose(hp.clone().applyMatrix4(this.root.clone().invert()), this.q.setFromEuler(this.e), this.one);
-      this.place('head', i, headM); this.place('eyes', i, headM);
-      for (const side of [-1, 1] as const) {
-        const s = side < 0 ? 'L' : 'R';
+      this.headM.compose(this.v(0, 0.95 + 0.72 * ch, -0.72 * sh + 0.02), this.q.setFromEuler(this.e), this.one);
+      this.place('head', i, this.headM); this.place('eyes', i, this.headM);
+      for (const [side, kUpper, kFore, kWrist, kHand, kThigh, kShin, kShoe] of InfectedView.SIDES) {
         // arms: reaching for prey, flailing on the strike, limp when down
         let ax = z.state === 'climb' ? 2.75 + sw * side * 0.35 : z.state === 'windup' ? 2.2 - Math.min(1, z.t / 0.45) * 1.6 : z.state === 'chase' ? 1.3 + sw * side * 0.22 + twitch : 0.45 + sw * side * 0.25;
         let spread = 0.12 + (z.state === 'stagger' ? 0.6 : 0);
         if (fall) { ax *= 1 - fall; spread = 1.1 * fall; }
         const sho = up(side * 0.19, 0.46, 0);
-        const dir = (a: number, sp: number) => new THREE.Vector3(side * Math.sin(sp), -Math.cos(a) * Math.cos(sp), -Math.sin(a) * Math.cos(sp)).transformDirection(this.root);
-        const elb = sho.clone().addScaledVector(dir(ax, spread), UPPER);
+        const dir = (a: number, sp: number) => this.v(side * Math.sin(sp), -Math.cos(a) * Math.cos(sp), -Math.sin(a) * Math.cos(sp)).transformDirection(this.root);
+        const elb = this.v(0, 0, 0).copy(sho).addScaledVector(dir(ax, spread), UPPER);
         const fd = dir(ax + 0.35, spread * 0.6);
-        const wri = elb.clone().addScaledVector(fd, FORE * 0.72), end = wri.clone().addScaledVector(fd, FORE * 0.3);
-        this.seg(`upper${s}`, i, sho, elb, right); this.seg(`fore${s}`, i, elb, wri, right);
-        this.seg(`wrist${s}`, i, wri, end, right); this.seg(`hand${s}`, i, end, end.clone().addScaledVector(fd, 0.1), right);
+        const wri = this.v(0, 0, 0).copy(elb).addScaledVector(fd, FORE * 0.72), end = this.v(0, 0, 0).copy(wri).addScaledVector(fd, FORE * 0.3);
+        this.seg(kUpper, i, sho, elb, right); this.seg(kFore, i, elb, wri, right);
+        this.seg(kWrist, i, wri, end, right); this.seg(kHand, i, end, this.v(0, 0, 0).copy(end).addScaledVector(fd, 0.1), right);
         // legs: shambling gait with bent knees
         const climbing = z.state === 'climb' ? 1 : 0;
         const a = (sw * side * 0.45 * moving + climbing * (0.5 + sw * side * 0.4)) * (1 - fall), k = (0.2 + Math.max(0, -sw * side) * 0.55 * moving + climbing * 0.9) * (1 - fall);
         const hip = P(side * 0.1, 0.91, 0);
         const kn = P(side * 0.1, 0.91 - Math.cos(a) * THIGH, -Math.sin(a) * THIGH);
-        const ank = kn.clone().add(new THREE.Vector3(0, -Math.cos(a - k), -Math.sin(a - k)).transformDirection(this.root).multiplyScalar(SHIN));
-        this.seg(`thigh${s}`, i, hip, kn, right); this.seg(`shin${s}`, i, kn, ank, right);
+        const ank = this.v(0, -Math.cos(a - k), -Math.sin(a - k)).transformDirection(this.root).multiplyScalar(SHIN).add(kn);
+        this.seg(kThigh, i, hip, kn, right); this.seg(kShin, i, kn, ank, right);
         this.m.copy(this.root).setPosition(ank).multiply(this.tmp.makeRotationY(Math.PI)); // shoes face +Z
-        this.parts[`shoe${s}`].setMatrixAt(i, this.m);
+        this.parts[kShoe].setMatrixAt(i, this.m);
       }
     }
     for (const p of Object.values(this.parts)) { p.count = n; p.instanceMatrix.needsUpdate = true; }

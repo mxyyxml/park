@@ -209,7 +209,12 @@ export class Weapons {
     this.scene.add(mesh);
     this.flare = { mesh, light, vel: dir.clone().multiplyScalar(17).add(new THREE.Vector3(0, 3, 0)), landed: false, t: 0 };
   }
-  private removeFlare() { if (this.flare) { this.scene.remove(this.flare.mesh); this.flare.light.dispose(); this.flare = null; } }
+  private removeFlare() {
+    if (!this.flare) return;
+    const f = this.flare;
+    this.scene.remove(f.mesh); f.light.dispose(); f.mesh.geometry.dispose(); (f.mesh.material as THREE.Material).dispose();
+    this.flare = null;
+  }
   private updateFlare(dt: number, horde: Horde | null) {
     const f = this.flare;
     if (!f) return;

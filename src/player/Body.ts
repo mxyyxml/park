@@ -29,7 +29,11 @@ export interface BodyDriver {
   balance: number;
 }
 
-const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+// Scratch vectors: during update() V() hands out pooled vectors (reset each call, never stored past
+// the frame); outside it (construction, persistent fields) it allocates as usual.
+const POOL = Array.from({ length: 768 }, () => new THREE.Vector3());
+let pooling = false, pIdx = 0;
+const V = (x = 0, y = 0, z = 0) => (pooling && pIdx < POOL.length ? POOL[pIdx++].set(x, y, z) : new THREE.Vector3(x, y, z));
 
 /**
  * Shadow-only parts of the first-person body: the mesh draws nothing for the camera (draw range
@@ -460,6 +464,10 @@ export class RunnerBody {
    * view: camera world matrix (first person) or a synthesized head frame (ghost).
    */
   update(dt: number, d: BodyDriver, view: THREE.Matrix4, eyePos: THREE.Vector3, feet: THREE.Vector3) {
+    pooling = true; pIdx = 0;
+    try { this.pose(dt, d, view, eyePos, feet); } finally { pooling = false; }
+  }
+  private pose(dt: number, d: BodyDriver, view: THREE.Matrix4, eyePos: THREE.Vector3, feet: THREE.Vector3) {
     this.t += dt;
     const st = d.state;
     const speed = Math.hypot(d.vel.x, d.vel.z);

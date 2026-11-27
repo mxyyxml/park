@@ -12,6 +12,9 @@ const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
 const tmpS = new THREE.Vector3(1, 1, 1);
 const tmpP = new THREE.Vector3();
+const tmpO = new THREE.Vector3();
+const tmpL = new THREE.Matrix4();
+const ORIGIN = new THREE.Vector3();
 
 function softSprite(): THREE.Texture {
   const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -277,14 +280,14 @@ transformed.y -= fx * fx * 0.12;`);
     for (let i = 0; i < this.birds.length; i++) {
       const bd = this.birds[i];
       const to = tmpP.copy(this.flockCenter).sub(bd.p);
-      const orbit = new THREE.Vector3(-to.z, 0, to.x).normalize().multiplyScalar(4);
+      const orbit = tmpO.set(-to.z, 0, to.x).normalize().multiplyScalar(4);
       bd.v.addScaledVector(to, dt * 0.35).addScaledVector(orbit, dt * 0.8);
       if (this.flockScare > 4) bd.v.y += dt * 6;
       const sp = bd.v.length(); const maxS = this.flockScare > 0 ? 14 : 8;
       if (sp > maxS) bd.v.multiplyScalar(maxS / sp);
       bd.p.addScaledVector(bd.v, dt);
       bd.flap += dt * (this.flockScare > 0 ? 22 : 10);
-      tmpQ.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), bd.v, THREE.Object3D.DEFAULT_UP));
+      tmpQ.setFromRotationMatrix(tmpL.lookAt(ORIGIN, bd.v, THREE.Object3D.DEFAULT_UP));
       const s = 1 + Math.sin(bd.flap) * 0.5;
       tmpS.set(s, 1, 1);
       tmpM.compose(bd.p, tmpQ, tmpS);

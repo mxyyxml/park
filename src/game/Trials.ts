@@ -134,14 +134,30 @@ function trialFromPath(city: CityInfo, world: CollisionWorld, id: string, name: 
   };
 }
 
-export function buildTrials(city: CityInfo, world: CollisionWorld, ziplines: Zipline[] = []): TrialDef[] {
+/**
+ * `cache` (optional, persisted by the game): per trial id, the reference time and route length of the
+ * route that passed last time. Generation is deterministic, so a cached trial is recognised by its
+ * length and accepted without re-running the autopilot; other candidates for it are skipped.
+ */
+export function buildTrials(city: CityInfo, world: CollisionWorld, ziplines: Zipline[] = [], cache?: Record<string, number>, ver = ''): TrialDef[] {
   const B = city.buildings;
   const trials: TrialDef[] = [];
   const inBlock = (i: number, j: number) => B.filter((b) => b.block === j * COLS + i && b.kind !== 'spire');
   /** buildings in the blocks around building `bi` (its own block and the 4 neighbours) */
   const around = (bi: number) => { const k = B[bi].block, i = k % COLS, j = Math.floor(k / COLS); return [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].flatMap(([di, dj]) => inBlock(i + di, j + dj)).map((b) => b.id); };
   // keep a route only if the autopilot can actually run it with the real physics (else try the next one)
-  const accept = (t: TrialDef) => { const ok = calibrate(t, world, ziplines) != null; if (ok) trials.push(t); return ok; };
+  const accept = (t: TrialDef) => {
+    const key = `${t.id}@${ver}`, ref = cache?.[key], len = cache?.[`${key}:len`];
+    if (ref && len) {
+      if (Math.round(t.length) !== len) return false;
+      t.medals = [Math.round(ref * 0.9), Math.round(ref * 1.12), Math.round(ref * 1.45)];
+      trials.push(t); return true;
+    }
+    const time = calibrate(t, world, ziplines);
+    if (time == null) return false;
+    if (cache) { cache[key] = time; cache[`${key}:len`] = Math.round(t.length); }
+    trials.push(t); return true;
+  };
   const farthest = (from: number, cands: number[]) => {
     const f = B[from];
     return cands.map((c) => ({ c, d: Math.hypot((B[c].minX + B[c].maxX) / 2 - (f.minX + f.maxX) / 2, (B[c].minZ + B[c].maxZ) / 2 - (f.minZ + f.maxZ) / 2) }))

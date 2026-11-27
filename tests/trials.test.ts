@@ -47,4 +47,15 @@ describe('time trials are completable by the autopilot using the real physics', 
       expect(deaths).toBe(0);
     });
   }
+  it('a second load reuses the cached, already-validated routes without re-running the autopilot', () => {
+    const cache: Record<string, number> = {};
+    const t0 = performance.now();
+    const first = buildTrials(city, b.world, b.ziplines, cache, 'test');
+    const cold = performance.now() - t0;
+    const t1 = performance.now();
+    const second = buildTrials(city, b.world, b.ziplines, cache, 'test');
+    const warm = performance.now() - t1;
+    expect(second.map((t) => `${t.id}:${t.checkpoints.length}:${t.medals.join(',')}`)).toEqual(first.map((t) => `${t.id}:${t.checkpoints.length}:${t.medals.join(',')}`));
+    expect(warm).toBeLessThan(cold / 3);
+  });
 });

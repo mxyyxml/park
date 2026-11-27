@@ -13,7 +13,7 @@ import { instanceModel, loadModel, pickParts } from '../render/instanced';
 import { buildTerrain } from '../world/Terrain';
 import { Input } from '../core/Input';
 import { AudioEngine } from '../audio/AudioEngine';
-import { buildTrials, calibrate, TrialDef } from './Trials';
+import { buildTrials, TrialDef } from './Trials';
 import { Horde, InfectedView } from './Infected';
 import { Combo } from './Combo';
 import { Weapons, ITEM_NAME, type Item, type ItemKind } from './Weapons';
@@ -203,13 +203,8 @@ export class Game {
     // trials + medal calibration with the autopilot (cached)
     this.ui.setLoading(0.8, 'Calibrating time trials');
     await this.yieldUI();
-    this.trials = buildTrials(this.city, this.builder.world, this.builder.ziplines);
-    for (const t of this.trials) {
-      const key = `${t.id}@${CALIB_VERSION}`;
-      let ref = this.save.data.calib[key];
-      if (!ref) { ref = calibrate(t, this.builder.world, this.builder.ziplines) ?? 0; if (ref) this.save.data.calib[key] = ref; await this.yieldUI(); }
-      if (ref) t.medals = [Math.round(ref * 0.9), Math.round(ref * 1.12), Math.round(ref * 1.45)];
-    }
+    // routes are checked by the autopilot once, then cached with their medal times (see buildTrials)
+    this.trials = buildTrials(this.city, this.builder.world, this.builder.ziplines, this.save.data.calib, String(CALIB_VERSION));
     this.save.flush();
 
     this.buildRope();
@@ -474,7 +469,7 @@ export class Game {
   }
   /** glowing caches at the stash and the supply point (shown until picked up) */
   private buildPickups() {
-    for (const o of this.pickups) this.r.scene.remove(o);
+    for (const o of this.pickups) this.disposeItem(o);
     this.pickups = [];
     const P = this.storyPlaces();
     for (const v of [P.stash, P.supplies]) {
@@ -511,7 +506,7 @@ export class Game {
     if (!this.story) return;
     this.clearGround();
     this.story = null;
-    for (const o of this.pickups) this.r.scene.remove(o);
+    for (const o of this.pickups) this.disposeItem(o);
     this.pickups = [];
     this.ui.radio([]);
     this.ui.setMarker(0, 0, false, false, 0);
@@ -1028,7 +1023,12 @@ export class Game {
     // items you drop (or that appear under you) wait until you've stepped away
     this.ground.push({ item, mesh: g, pos, armed: false });
   }
-  private clearGround() { for (const g of this.ground) this.r.scene.remove(g.mesh); this.ground = []; }
+  /** remove a ground item and free its GPU resources */
+  private disposeItem(o: THREE.Object3D) {
+    this.r.scene.remove(o);
+    o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.geometry.dispose(); (m.material as THREE.Material).dispose(); } });
+  }
+  private clearGround() { for (const g of this.ground) this.disposeItem(g.mesh); this.ground = []; }
   /** Night Run: spare weapons and flare packs on roofs along the trial routes (known reachable spots) */
   private scatterItems() {
     const spots = this.trials.flatMap((t) => t.checkpoints).filter((c) => c.y > 5 && c.y < 40);
@@ -1046,7 +1046,7 @@ export class Game {
       const fits = (g.item.kind === 'flares' && W.slots.some((x) => x?.kind === 'flares')) || W.slots.some((x) => !x);
       if (fits || swap) {
         const dropped = W.give(g.item.kind, g.item.count);
-        this.r.scene.remove(g.mesh); this.ground.splice(this.ground.indexOf(g), 1);
+        this.disposeItem(g.mesh); this.ground.splice(this.ground.indexOf(g), 1);
         this.audio.playUi('collect', 0.4);
         this.ui.toast(ITEM_NAME[g.item.kind] + (g.item.kind === 'flares' ? ` +${g.item.count}` : ''), g.item.kind === 'flares' ? 'F or G to throw' : 'F to strike', true, 1.4);
         if (dropped) this.dropItem(dropped, g.pos);
