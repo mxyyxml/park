@@ -1089,7 +1089,11 @@ export class PlayerController {
     if (this.stateTime >= this.tDur) {
       this.pos.x = to.x; this.pos.y = to.y; this.pos.z = to.z;
       this.vel.x = this.tExit.x; this.vel.z = this.tExit.z; this.vel.y = 0;
-      // keep forward input momentum: if player still pushing, allow carrying more speed
+      // still pushing forward: come out of the climb at least at a jog, so the flow carries on
+      if (input.moveY > 0.3) {
+        const along = this.vel.x * this.tDirX + this.vel.z * this.tDirZ;
+        if (along < 4.5) { this.vel.x += this.tDirX * (4.5 - along); this.vel.z += this.tDirZ * (4.5 - along); }
+      }
       this.height = this.canStand() ? P.H_STAND : P.H_CROUCH;
       this.crouched = this.height < P.H_STAND;
       const sup = this.world.support(this.pos.x, this.pos.y, this.pos.z, P.R * 0.92, 0.12);

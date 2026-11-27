@@ -48,7 +48,7 @@ function showSoftwareWarning() {
   document.body.append(d);
 }
 function localStorageHasSettings() { try { return !!localStorage.getItem('skyline-runner/v1'); } catch { return false; } }
-const CALIB_VERSION = 9;
+const CALIB_VERSION = 10;
 
 type Mode = 'loading' | 'attract' | 'free' | 'trial' | 'replay';
 
